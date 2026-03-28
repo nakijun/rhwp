@@ -836,16 +836,6 @@ impl LayoutEngine {
             let total_char_count: usize = comp_line.runs.iter()
                 .map(|r| r.text.chars().filter(|c| *c != '\t').count()).sum();
 
-            // 탭이 있는 줄: 마지막 탭 이후의 공백만 분배 대상
-            // (탭 앞 공백에 extra_word_spacing을 적용하면 탭이 다음 탭 정지로 점프하여 오버플로)
-            let last_tab_pos = if has_tabs {
-                let all_chars: Vec<char> = comp_line.runs.iter()
-                    .flat_map(|r| r.text.chars()).collect();
-                all_chars.iter().rposition(|c| *c == '\t')
-            } else {
-                None
-            };
-
             let (extra_word_sp, extra_char_sp) = if needs_justify {
                 // 양쪽 정렬: 후행 공백 제외한 내부 공백에 분배
                 let all_chars: Vec<char> = comp_line.runs.iter()
@@ -853,51 +843,22 @@ impl LayoutEngine {
                 let trailing_spaces = all_chars.iter().rev()
                     .take_while(|c| **c == ' ').count();
                 let visible_count = all_chars.len() - trailing_spaces;
-
-                // 탭이 있으면 마지막 탭 이후의 공백만, 없으면 전체 공백
-                let count_start = last_tab_pos.map(|p| p + 1).unwrap_or(0);
-                let interior_spaces = all_chars[count_start..visible_count].iter()
+                let interior_spaces = all_chars[..visible_count].iter()
                     .filter(|c| **c == ' ').count();
-
                 if interior_spaces > 0 {
-                    // 마지막 탭 이후 텍스트의 폭 계산
-                    let after_tab_text: String = all_chars[count_start..].iter().collect();
-                    let after_tab_width = if count_start > 0 {
-                        // 탭 이후 텍스트 폭 추정
-                        if let Some(first_run) = comp_line.runs.first() {
-                            let ts = resolved_to_text_style(styles, first_run.char_style_id, first_run.lang_index);
-                            let visible_after: String = all_chars[count_start..visible_count].iter().collect();
-                            estimate_text_width(&visible_after, &ts)
+                    // 후행 공백 폭 계산
+                    let trailing_width = if trailing_spaces > 0 {
+                        if let Some(last_run) = comp_line.runs.last() {
+                            let mut ts = resolved_to_text_style(styles, last_run.char_style_id, last_run.lang_index);
+                            ts.default_tab_width = tab_width;
+                            let trailing_str: String = " ".repeat(trailing_spaces);
+                            estimate_text_width(&trailing_str, &ts)
                         } else { 0.0 }
-                    } else {
-                        // 탭 없음: 전체 텍스트 - trailing
-                        let trailing_width = if trailing_spaces > 0 {
-                            if let Some(last_run) = comp_line.runs.last() {
-                                let mut ts = resolved_to_text_style(styles, last_run.char_style_id, last_run.lang_index);
-                                ts.default_tab_width = tab_width;
-                                let trailing_str: String = " ".repeat(trailing_spaces);
-                                estimate_text_width(&trailing_str, &ts)
-                            } else { 0.0 }
-                        } else { 0.0 };
-                        total_text_width - trailing_width
-                    };
-
-                    if count_start > 0 {
-                        // 탭이 있는 줄: 탭 이후 텍스트 영역에서만 공백 분배
-                        // available = 탭 이후 남은 폭, used = 탭 이후 텍스트 폭
-                        let tab_end_x = total_text_width - after_tab_width;
-                        let after_available = available_width - tab_end_x;
-                        let visible_after: String = all_chars[count_start..visible_count].iter().collect();
-                        let after_used = if let Some(first_run) = comp_line.runs.first() {
-                            let ts = resolved_to_text_style(styles, first_run.char_style_id, first_run.lang_index);
-                            estimate_text_width(&visible_after, &ts)
-                        } else { after_tab_width };
-                        ((after_available - after_used) / interior_spaces as f64, 0.0)
-                    } else {
-                        // 탭 없음: 기존 로직
-                        let effective_used = after_tab_width;
-                        ((available_width - effective_used) / interior_spaces as f64, 0.0)
-                    }
+                    } else { 0.0 };
+                    let effective_used = total_text_width - trailing_width;
+                    // 양쪽 정렬: 음수 spacing 허용 (원본 HWP 줄바꿈이 우리 메트릭보다
+                    // 넓을 때 단어 간격을 압축하여 양쪽 가지런하게 맞춤)
+                    ((available_width - effective_used) / interior_spaces as f64, 0.0)
                 } else if total_char_count > 1 {
                     // 양쪽 정렬이지만 공백 없음 (일본어 등):
                     // 단어 간격 대신 글자 간격으로 양쪽 맞춤
@@ -1077,15 +1038,8 @@ impl LayoutEngine {
                     }
                 }
                 text_style.line_x_offset = x - col_area.x;
-                // 탭이 있는 줄: 마지막 탭 이전 run에는 extra_word_spacing 비적용
-                // (탭 앞 공백에 spacing을 적용하면 탭이 다음 탭 정지로 점프)
-                let run_after_last_tab = if let Some(tab_pos_in_line) = last_tab_pos {
-                    run_char_pos > comp_line.char_start + tab_pos_in_line
-                } else {
-                    true // 탭 없으면 모든 run에 적용
-                };
-                text_style.extra_word_spacing = if run_after_last_tab { extra_word_sp } else { 0.0 };
-                text_style.extra_char_spacing = if run_after_last_tab { extra_char_sp } else { 0.0 };
+                text_style.extra_word_spacing = extra_word_sp;
+                text_style.extra_char_spacing = extra_char_sp;
                 let run_border_fill_id = styles.char_styles.get(run.char_style_id as usize)
                     .map(|cs| cs.border_fill_id).unwrap_or(0);
                 let full_width = if run.char_overlap.is_some() {
