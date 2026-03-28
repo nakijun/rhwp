@@ -3,8 +3,24 @@
   "displayName": "HWP Viewer",
   "description": "HWP/HWPX 문서 뷰어 — rhwp 기반",
   "version": "0.1.0",
-  "publisher": "rhwp",
+  "publisher": "edwardkim",
   "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/edwardkim/rhwp"
+  },
+  "bugs": {
+    "url": "https://github.com/edwardkim/rhwp/issues"
+  },
+  "homepage": "https://github.com/edwardkim/rhwp/tree/main/rhwp-vscode",
+  "keywords": [
+    "hwp",
+    "hwpx",
+    "한글",
+    "viewer",
+    "document"
+  ],
   "engines": {
     "vscode": "^1.82.0"
   },
