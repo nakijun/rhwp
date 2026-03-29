@@ -28,26 +28,26 @@ mod tests {
         generate_sample_with_options(template_path, output_path, texts, font_name, None)
     }
 
-    /// 템플릿 HWP 로드 → 텍스트 + 폰트 + 정렬 교체 → 저장
+    /// empty.hwp 템플릿에 DocumentCore API로 텍스트 삽입하여 샘플 생성
     fn generate_sample_with_options(
-        template_path: &str,
+        _template_path: &str,
         output_path: &str,
         texts: &[&str],
         font_name: Option<&str>,
         alignment: Option<crate::model::style::Alignment>,
     ) -> Result<(), String> {
-        let p = Path::new(template_path);
-        if !p.exists() {
-            return Err(format!("템플릿 없음: {}", template_path));
+        // 빈 문서 템플릿 로드 (컨트롤 마커 구조가 올바른 상태)
+        let empty_path = Path::new("template/empty.hwp");
+        if !empty_path.exists() {
+            return Err("template/empty.hwp 없음".to_string());
         }
-        let data = fs::read(p).map_err(|e| e.to_string())?;
-        let mut doc = crate::parser::parse_document(&data)
-            .map_err(|e| e.to_string())?;
+        let data = fs::read(empty_path).map_err(|e| e.to_string())?;
+        let mut core = crate::document_core::DocumentCore::from_bytes(&data)
+            .map_err(|e| format!("{:?}", e))?;
 
         // 폰트 변경
         if let Some(fname) = font_name {
-            // 모든 언어 카테고리의 첫 번째 폰트를 변경
-            for lang_fonts in &mut doc.doc_info.font_faces {
+            for lang_fonts in &mut core.document.doc_info.font_faces {
                 if lang_fonts.is_empty() {
                     lang_fonts.push(crate::model::style::Font {
                         raw_data: None,
@@ -58,76 +58,43 @@ mod tests {
                     });
                 } else {
                     lang_fonts[0].name = fname.to_string();
-                    lang_fonts[0].raw_data = None; // 재직렬화
+                    lang_fonts[0].raw_data = None;
                 }
             }
-            // DocInfo raw_stream 무효화 (폰트 변경 반영)
-            doc.doc_info.raw_stream = None;
+            core.document.doc_info.raw_stream = None;
         }
 
-        // 첫 번째 섹션의 문단 텍스트 교체
-        if doc.sections.is_empty() {
-            return Err("섹션 없음".to_string());
-        }
-        let section = &mut doc.sections[0];
-
-        // 기존 문단 수보다 적으면 남은 문단 제거, 많으면 첫 문단 복제
-        while section.paragraphs.len() > texts.len() && section.paragraphs.len() > 1 {
-            section.paragraphs.pop();
-        }
-        while section.paragraphs.len() < texts.len() {
-            let template_para = section.paragraphs[0].clone();
-            section.paragraphs.push(template_para);
-        }
-
-        for (i, text) in texts.iter().enumerate() {
-            let para = &mut section.paragraphs[i];
-            // 텍스트 교체
-            para.text = text.to_string();
-            // char_offsets 재생성 (UTF-16 단위)
-            let mut offsets = Vec::new();
-            let mut utf16_pos = 0u32;
-            for ch in text.chars() {
-                offsets.push(utf16_pos);
-                utf16_pos += ch.len_utf16() as u32;
-            }
-            para.char_offsets = offsets;
-            para.char_count = utf16_pos + 1; // +1 for paragraph end marker
-
-            // char_shapes: 전체 텍스트에 동일한 스타일 (첫 번째 유지)
-            if !para.char_shapes.is_empty() {
-                let first_style = para.char_shapes[0].clone();
-                para.char_shapes = vec![first_style];
-            }
-
-            // line_segs를 line_height=0으로 설정
-            // → from_bytes 로드 시 reflow_zero_height_paragraphs가 자동 재계산
-            // → 한컴도 열 때 자체적으로 LINE_SEG 재계산
-            para.line_segs = vec![crate::model::paragraph::LineSeg::default()];
-
-            // 구역나누기/단정의 컨트롤은 유지, 나머지 제거
-            // (첫 문단의 SectionDef/ColumnDef가 없으면 페이지 크기 0으로 됨)
-            para.controls.retain(|c| {
-                matches!(c,
-                    crate::model::control::Control::SectionDef(_) |
-                    crate::model::control::Control::ColumnDef(_)
-                )
-            });
-
-            // 정렬 변경
-            if let Some(align) = alignment {
-                let ps_id = para.para_shape_id as usize;
-                if ps_id < doc.doc_info.para_shapes.len() {
-                    doc.doc_info.para_shapes[ps_id].alignment = align;
-                    doc.doc_info.para_shapes[ps_id].raw_data = None;
-                    doc.doc_info.raw_stream = None;
-                }
+        // 정렬 변경
+        if let Some(align) = alignment {
+            let para = &core.document.sections[0].paragraphs[0];
+            let ps_id = para.para_shape_id as usize;
+            if ps_id < core.document.doc_info.para_shapes.len() {
+                core.document.doc_info.para_shapes[ps_id].alignment = align;
+                core.document.doc_info.para_shapes[ps_id].raw_data = None;
+                core.document.doc_info.raw_stream = None;
             }
         }
-        section.raw_stream = None;
+
+        // 첫 문단에 텍스트 삽입 (DocumentCore API 사용)
+        if let Some(first_text) = texts.first() {
+            let _ = core.insert_text_native(0, 0, 0, first_text);
+        }
+
+        // 추가 문단: Enter로 문단 분할 후 텍스트 삽입
+        for (i, text) in texts.iter().enumerate().skip(1) {
+            // 이전 문단 끝에서 Enter
+            let prev_para = &core.document.sections[0].paragraphs[i - 1];
+            let end_pos = prev_para.text.chars().count();
+            let _ = core.split_paragraph_native(0, i - 1, end_pos);
+            // 새 문단에 텍스트 삽입
+            let _ = core.insert_text_native(0, i, 0, text);
+        }
+
+        // raw_stream 무효화
+        core.document.sections[0].raw_stream = None;
 
         // 직렬화
-        let bytes = crate::serializer::serialize_document(&doc)
+        let bytes = crate::serializer::serialize_document(&core.document)
             .map_err(|e| format!("{:?}", e))?;
         fs::write(output_path, bytes).map_err(|e| e.to_string())?;
 
