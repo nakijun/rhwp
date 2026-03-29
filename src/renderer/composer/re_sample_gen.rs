@@ -13,7 +13,17 @@ mod tests {
     fn generate_sample(
         template_path: &str,
         output_path: &str,
+        texts: &[&str],
+    ) -> Result<(), String> {
+        generate_sample_with_font(template_path, output_path, texts, None)
+    }
+
+    /// 템플릿 HWP 로드 → 텍스트 + 폰트 교체 → 저장
+    fn generate_sample_with_font(
+        template_path: &str,
+        output_path: &str,
         texts: &[&str],  // 문단별 텍스트
+        font_name: Option<&str>,  // None이면 템플릿 폰트 유지
     ) -> Result<(), String> {
         let p = Path::new(template_path);
         if !p.exists() {
@@ -22,6 +32,27 @@ mod tests {
         let data = fs::read(p).map_err(|e| e.to_string())?;
         let mut doc = crate::parser::parse_document(&data)
             .map_err(|e| e.to_string())?;
+
+        // 폰트 변경
+        if let Some(fname) = font_name {
+            // 모든 언어 카테고리의 첫 번째 폰트를 변경
+            for lang_fonts in &mut doc.doc_info.font_faces {
+                if lang_fonts.is_empty() {
+                    lang_fonts.push(crate::model::style::Font {
+                        raw_data: None,
+                        name: fname.to_string(),
+                        alt_type: 0,
+                        alt_name: None,
+                        default_name: None,
+                    });
+                } else {
+                    lang_fonts[0].name = fname.to_string();
+                    lang_fonts[0].raw_data = None; // 재직렬화
+                }
+            }
+            // DocInfo raw_stream 무효화 (폰트 변경 반영)
+            doc.doc_info.raw_stream = None;
+        }
 
         // 첫 번째 섹션의 문단 텍스트 교체
         if doc.sections.is_empty() {
@@ -194,6 +225,39 @@ mod tests {
         );
         if let Err(e) = result {
             eprintln!("re-06 생성 실패: {}", e);
+        }
+    }
+
+    // ─── 폰트별 샘플 ───
+
+    #[test]
+    fn test_gen_re_font_variations() {
+        let fonts = [
+            ("batang", "바탕"),
+            ("batangche", "바탕체"),
+            ("gulim", "굴림"),
+            ("gulimche", "굴림체"),
+            ("dotum", "돋움"),
+            ("dotumche", "돋움체"),
+            ("malgun", "맑은 고딕"),
+        ];
+
+        // 동일한 테스트 텍스트 (한글+영문+숫자+구두점 혼합)
+        let text = "가나다라 English 12345 가,나.다! 마바사아 test 67890 자차카타파하";
+        let long_text = format!("{} {}", text, text); // 2줄 이상
+
+        for (suffix, font_name) in &fonts {
+            let output = format!("samples/re-font-{}.hwp", suffix);
+            let result = generate_sample_with_font(
+                "samples/lseg-01-basic.hwp",
+                &output,
+                &[&long_text],
+                Some(font_name),
+            );
+            match result {
+                Ok(()) => eprintln!("생성: {} (폰트: {})", output, font_name),
+                Err(e) => eprintln!("실패: {} — {}", output, e),
+            }
         }
     }
 
