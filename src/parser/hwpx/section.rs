@@ -204,7 +204,7 @@ fn parse_paragraph(
                         para.controls.push(group);
                     }
                     b"ctrl" => {
-                        parse_ctrl(ce, reader, &mut para.controls)?;
+                        parse_ctrl(ce, reader, &mut para.controls, &mut text_parts)?;
                     }
                     b"compose" => {
                         // 글자겹침 (CharOverlap)
@@ -283,8 +283,10 @@ fn parse_paragraph(
     para.has_para_text = !para.text.is_empty() || !para.controls.is_empty();
 
     // char_shapes 변환
+    // char_shapes의 start_pos에 ctrl_offset 적용 (char_offsets와 동기화, Task #11)
+    let ctrl_offset_for_shapes: u32 = (para.controls.len() as u32) * 8;
     para.char_shapes = char_shape_changes.into_iter()
-        .map(|(pos, id)| CharShapeRef { start_pos: pos, char_shape_id: id })
+        .map(|(pos, id)| CharShapeRef { start_pos: pos + ctrl_offset_for_shapes, char_shape_id: id })
         .collect();
 
     // 기본 line_seg (빈 문단이라도 최소 1개)
@@ -1736,6 +1738,7 @@ fn parse_ctrl(
     _e: &quick_xml::events::BytesStart,
     reader: &mut Reader<&[u8]>,
     controls: &mut Vec<Control>,
+    text_parts: &mut Vec<String>,
 ) -> Result<(), HwpxError> {
     let mut buf = Vec::new();
     loop {
@@ -1775,9 +1778,13 @@ fn parse_ctrl(
                     b"fieldBegin" => {
                         let ctrl = parse_ctrl_field_begin(ce, reader)?;
                         controls.push(ctrl);
+                        // FIELD_BEGIN 제어 문자 추가 (Task #11)
+                        text_parts.push("\u{0003}".to_string());
                     }
                     b"fieldEnd" => {
                         skip_element(reader, b"fieldEnd")?;
+                        // FIELD_END 제어 문자 추가 (Task #11)
+                        text_parts.push("\u{0004}".to_string());
                     }
                     b"pageHiding" => {
                         let ph = parse_page_hiding_attrs(ce);
@@ -1835,8 +1842,12 @@ fn parse_ctrl(
                     b"fieldBegin" => {
                         let f = parse_field_begin_attrs(ce);
                         controls.push(Control::Field(f));
+                        text_parts.push("\u{0003}".to_string());
                     }
-                    b"fieldEnd" | b"hiddenComment" => {}
+                    b"fieldEnd" => {
+                        text_parts.push("\u{0004}".to_string());
+                    }
+                    b"hiddenComment" => {}
                     _ => {}
                 }
             }
