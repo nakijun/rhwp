@@ -600,7 +600,7 @@ fn parse_border_fill(
                                             "CENTER" => ImageFillMode::Center,
                                             "CENTER_TOP" => ImageFillMode::CenterTop,
                                             "CENTER_BOTTOM" => ImageFillMode::CenterBottom,
-                                            "FIT" | "FIT_TO_SIZE" | "STRETCH" => ImageFillMode::FitToSize,
+                                            "FIT" | "FIT_TO_SIZE" | "STRETCH" | "TOTAL" => ImageFillMode::FitToSize,
                                             "TOP_LEFT_ALIGN" => ImageFillMode::LeftTop,
                                             _ => ImageFillMode::TileAll,
                                         };

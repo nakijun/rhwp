@@ -268,6 +268,56 @@ impl LayoutEngine {
             }
         }
 
+        // ── 4-2. cellzone 배경 렌더링 (zone 전체 영역에 한 번) ──
+        for zone in &table.zones {
+            if zone.border_fill_id == 0 { continue; }
+            let zone_idx = (zone.border_fill_id as usize).saturating_sub(1);
+            if let Some(zone_bs) = styles.border_styles.get(zone_idx) {
+                // zone 영역의 좌표 계산
+                let sc = zone.start_col as usize;
+                let ec = (zone.end_col as usize + 1).min(col_count);
+                let sr = zone.start_row as usize;
+                let er = (zone.end_row as usize + 1).min(row_count);
+                if sc < col_count && sr < row_count {
+                    let zone_x = table_x + row_col_x.get(sr).and_then(|r| r.get(sc)).copied().unwrap_or(0.0);
+                    let zone_y = table_y + row_y.get(sr).copied().unwrap_or(0.0);
+                    let zone_x_end = table_x + row_col_x.get(sr).and_then(|r| {
+                        if ec < r.len() { Some(r[ec]) } else { r.last().map(|&last_x| {
+                            // 마지막 열 끝 = 마지막 열 시작 + 해당 셀 너비
+                            let last_col = r.len() - 1;
+                            table.cells.iter()
+                                .find(|c| c.row as usize == sr && c.col as usize == last_col)
+                                .map(|c| last_x + hwpunit_to_px(c.width as i32, self.dpi))
+                                .unwrap_or(last_x)
+                        })}
+                    }).unwrap_or(0.0);
+                    let zone_y_end = table_y + row_y.get(er).copied().unwrap_or_else(|| {
+                        // 마지막 행 끝 = 마지막 행 시작 + 해당 행 높이
+                        row_y.get(er - 1).copied().unwrap_or(0.0) + table.row_sizes.get(er - 1).map(|&h| hwpunit_to_px(h as i32, self.dpi)).unwrap_or(0.0)
+                    });
+                    let zone_w = (zone_x_end - zone_x).max(0.0);
+                    let zone_h = (zone_y_end - zone_y).max(0.0);
+                    // 단색/패턴/그라데이션 배경
+                    self.render_cell_background(tree, &mut table_node, Some(zone_bs), zone_x, zone_y, zone_w, zone_h);
+                    // 이미지 채우기
+                    if let Some(ref img_fill) = zone_bs.image_fill {
+                        if let Some(img_content) = crate::renderer::layout::find_bin_data(bin_data_content, img_fill.bin_data_id) {
+                            let img_id = tree.next_id();
+                            let img_node = RenderNode::new(
+                                img_id,
+                                RenderNodeType::Image(ImageNode {
+                                    fill_mode: Some(img_fill.fill_mode),
+                                    ..ImageNode::new(img_fill.bin_data_id, Some(img_content.data.clone()))
+                                }),
+                                BoundingBox::new(zone_x, zone_y, zone_w, zone_h),
+                            );
+                            table_node.children.push(img_node);
+                        }
+                    }
+                }
+            }
+        }
+
         // ── 5. 셀 레이아웃 ──
         let mut h_edges: Vec<Vec<Option<BorderLine>>> = vec![vec![None; col_count]; row_count + 1];
         let mut v_edges: Vec<Vec<Option<BorderLine>>> = vec![vec![None; row_count]; col_count + 1];

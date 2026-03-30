@@ -282,7 +282,24 @@ fn parse_table_record(data: &[u8], table: &mut Table) {
 
     table.border_fill_id = r.read_u16().unwrap_or(0);
 
-    // border_fill_id 이후 추가 데이터 보존 (라운드트립용)
+    // 영역 속성 (zones): UINT16 nZones + TableZone[nZones]
+    if r.remaining() >= 2 {
+        let n_zones = r.read_u16().unwrap_or(0) as usize;
+        for _ in 0..n_zones {
+            if r.remaining() >= 10 {
+                let start_row = r.read_u16().unwrap_or(0);
+                let start_col = r.read_u16().unwrap_or(0);
+                let end_row = r.read_u16().unwrap_or(0);
+                let end_col = r.read_u16().unwrap_or(0);
+                let bf_id = r.read_u16().unwrap_or(0);
+                table.zones.push(crate::model::table::TableZone {
+                    start_col, start_row, end_col, end_row, border_fill_id: bf_id,
+                });
+            }
+        }
+    }
+
+    // 나머지 추가 데이터 보존 (라운드트립용)
     if r.remaining() > 0 {
         table.raw_table_record_extra = r.read_bytes(r.remaining()).unwrap_or_default();
     }

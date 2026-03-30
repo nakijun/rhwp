@@ -625,6 +625,20 @@ fn parse_table(
                             }
                         }
                     }
+                    b"cellzone" => {
+                        let mut zone = crate::model::table::TableZone::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"startColAddr" => zone.start_col = parse_u16(&attr),
+                                b"startRowAddr" => zone.start_row = parse_u16(&attr),
+                                b"endColAddr" => zone.end_col = parse_u16(&attr),
+                                b"endRowAddr" => zone.end_row = parse_u16(&attr),
+                                b"borderFillIDRef" => zone.border_fill_id = parse_u16(&attr),
+                                _ => {}
+                            }
+                        }
+                        table.zones.push(zone);
+                    }
                     _ => {}
                 }
             }
