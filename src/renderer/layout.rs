@@ -238,7 +238,7 @@ mod picture_footnote;
 mod border_rendering;
 mod utils;
 
-pub(crate) use text_measurement::{resolved_to_text_style, estimate_text_width, estimate_text_width_unrounded, compute_char_positions, is_cjk_char, split_into_clusters, find_next_tab_stop};
+pub(crate) use text_measurement::{resolved_to_text_style, estimate_text_width, estimate_text_width_unrounded, compute_char_positions, is_cjk_char, split_into_clusters, find_next_tab_stop, extract_tab_leaders_with_extended};
 pub(crate) use paragraph_layout::{map_pua_bullet_char, ensure_min_baseline};
 pub(crate) use utils::{resolve_numbering_id, find_bin_data, drawing_to_shape_style, drawing_to_line_style, layout_rect_to_bbox, format_page_number};
 pub(crate) use border_rendering::{border_width_to_px, create_border_line_nodes};

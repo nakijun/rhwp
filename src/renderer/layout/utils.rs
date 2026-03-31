@@ -111,9 +111,9 @@ pub(crate) fn drawing_to_shape_style(drawing: &crate::model::shape::DrawingObjAt
     // 배경색: solid 필드가 있으면 fill_type과 무관하게 배경색 적용
     // (Image/Gradient와 단색 채우기가 동시에 적용되는 케이스 지원)
     let fill_color = drawing.fill.solid.and_then(|s| {
-        // HWP pattern_type: -1=단색 채우기(패턴 없음), 0~5=패턴 채우기(패턴이 배경색 처리)
+        // HWP pattern_type: >0이면 패턴 채우기(패턴이 배경색 처리), 0 이하=단색
         // ColorRef 상위 바이트가 0이 아니면(0xFF 등) 투명
-        if s.pattern_type >= 0 || (s.background_color >> 24) != 0 {
+        if s.pattern_type > 0 || (s.background_color >> 24) != 0 {
             None
         } else {
             Some(s.background_color)
@@ -184,9 +184,9 @@ pub(crate) fn drawing_to_shape_style(drawing: &crate::model::shape::DrawingObjAt
     } else {
         1.0
     };
-    // 패턴 채우기: pattern_type >= 0이면 패턴 정보 생성 (0=가로줄, 1=세로줄, ..., 5=격자)
+    // 패턴 채우기: pattern_type > 0일 때만 패턴 정보 생성 (1=가로줄, 2=세로줄, ..., 6=격자)
     let pattern = drawing.fill.solid.and_then(|s| {
-        if s.pattern_type >= 0 {
+        if s.pattern_type > 0 {
             Some(super::super::PatternFillInfo {
                 pattern_type: s.pattern_type,
                 pattern_color: s.pattern_color,

@@ -76,6 +76,18 @@ pub fn parse_hwpx_header(xml: &str) -> Result<(DocInfo, DocProperties), HwpxErro
                     b"beginNum" => parse_begin_num(e, &mut doc_props),
                     b"font" => parse_font(e, &mut doc_info, current_font_group),
                     b"style" => parse_style(e, &mut doc_info),
+                    b"tabPr" => {
+                        // 자기 닫힘 태그: 빈 TabDef만 push
+                        let mut td = TabDef::default();
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"autoTabLeft" => td.auto_tab_left = attr_str(&attr) == "1",
+                                b"autoTabRight" => td.auto_tab_right = attr_str(&attr) == "1",
+                                _ => {}
+                            }
+                        }
+                        doc_info.tab_defs.push(td);
+                    }
                     _ => {}
                 }
             }
@@ -238,34 +250,68 @@ fn parse_char_shape(
                         b"italic" => cs.italic = true,
                         b"underline" => {
                             for attr in ce.attributes().flatten() {
-                                if attr.key.as_ref() == b"type" {
-                                    let val = attr_str(&attr);
-                                    cs.underline_type = match val.as_str() {
-                                        "BOTTOM" => UnderlineType::Bottom,
-                                        "TOP" => UnderlineType::Top,
-                                        _ => UnderlineType::None,
-                                    };
-                                }
-                                if attr.key.as_ref() == b"color" {
-                                    cs.underline_color = parse_color(&attr);
+                                match attr.key.as_ref() {
+                                    b"type" => {
+                                        cs.underline_type = match attr_str(&attr).as_str() {
+                                            "BOTTOM" => UnderlineType::Bottom,
+                                            "TOP" => UnderlineType::Top,
+                                            _ => UnderlineType::None,
+                                        };
+                                    }
+                                    b"color" => {
+                                        cs.underline_color = parse_color(&attr);
+                                    }
+                                    b"shape" => {
+                                        // 밑줄 모양 13종 (표 27 선 종류 + 물결선)
+                                        cs.underline_shape = match attr_str(&attr).as_str() {
+                                            "SOLID" => 0,
+                                            "DASH" => 1,
+                                            "DOT" => 2,
+                                            "DASH_DOT" => 3,
+                                            "DASH_DOT_DOT" => 4,
+                                            "LONG_DASH" => 5,
+                                            "CIRCLE" => 6,
+                                            "DOUBLE_SLIM" => 7,
+                                            "SLIM_THICK" => 8,
+                                            "THICK_SLIM" => 9,
+                                            "SLIM_THICK_SLIM" => 10,
+                                            "WAVE" => 11,
+                                            "DOUBLE_WAVE" => 12,
+                                            _ => 0,
+                                        };
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
                         b"strikeout" => {
                             for attr in ce.attributes().flatten() {
-                                if attr.key.as_ref() == b"shape" {
-                                    let val = attr_str(&attr);
-                                    // 유효한 취소선: SOLID, DASH, DOT 등 선 스타일
-                                    // NONE, 3D 등은 취소선 없음으로 처리
-                                    cs.strikethrough = matches!(
-                                        val.as_str(),
-                                        "SOLID" | "DASH" | "DOT" | "DASH_DOT" | "DASH_DOT_DOT"
-                                        | "LONG_DASH" | "CIRCLE" | "DOUBLE_SLIM"
-                                        | "SLIM_THICK" | "THICK_SLIM" | "SLIM_THICK_SLIM"
-                                    );
-                                }
-                                if attr.key.as_ref() == b"color" {
-                                    cs.strike_color = parse_color(&attr);
+                                match attr.key.as_ref() {
+                                    b"shape" => {
+                                        let val = attr_str(&attr);
+                                        // 유효한 취소선: NONE/3D 이외의 선 스타일
+                                        cs.strikethrough = !matches!(val.as_str(), "NONE" | "3D");
+                                        cs.strike_shape = match val.as_str() {
+                                            "SOLID" => 0,
+                                            "DASH" => 1,
+                                            "DOT" => 2,
+                                            "DASH_DOT" => 3,
+                                            "DASH_DOT_DOT" => 4,
+                                            "LONG_DASH" => 5,
+                                            "CIRCLE" => 6,
+                                            "DOUBLE_SLIM" => 7,
+                                            "SLIM_THICK" => 8,
+                                            "THICK_SLIM" => 9,
+                                            "SLIM_THICK_SLIM" => 10,
+                                            "WAVE" => 11,
+                                            "DOUBLE_WAVE" => 12,
+                                            _ => 0,
+                                        };
+                                    }
+                                    b"color" => {
+                                        cs.strike_color = parse_color(&attr);
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -522,12 +568,15 @@ fn parse_para_shape_switch(
                                 if attr.key.as_ref() == b"value" {
                                     let val = parse_i32(&attr);
                                     if in_hwpunitchar_case {
+                                        // HwpUnitChar 값은 실제 HWPUNIT(1× 스케일)이므로
+                                        // HWP 바이너리와 동일한 2× 스케일로 변환
+                                        let val2x = val * 2;
                                         match tag_name {
-                                            b"left" => ps.margin_left = val,
-                                            b"right" => ps.margin_right = val,
-                                            b"intent" => ps.indent = val,
-                                            b"prev" => ps.spacing_before = val,
-                                            b"next" => ps.spacing_after = val,
+                                            b"left" => ps.margin_left = val2x,
+                                            b"right" => ps.margin_right = val2x,
+                                            b"intent" => ps.indent = val2x,
+                                            b"prev" => ps.spacing_before = val2x,
+                                            b"next" => ps.spacing_after = val2x,
                                             _ => {}
                                         }
                                         found_case = true;
@@ -564,7 +613,14 @@ fn parse_para_shape_switch(
                             }
                             if in_hwpunitchar_case {
                                 if let Some(t) = ls_type { ps.line_spacing_type = t; }
-                                if let Some(v) = ls_val { ps.line_spacing = v; }
+                                if let Some(v) = ls_val {
+                                    // Fixed/SpaceOnly/Minimum은 HWPUNIT이므로 2× 스케일 변환
+                                    let effective_type = ls_type.unwrap_or(ps.line_spacing_type);
+                                    ps.line_spacing = match effective_type {
+                                        LineSpacingType::Percent => v,
+                                        _ => v * 2,
+                                    };
+                                }
                                 found_case = true;
                             } else if in_default {
                                 def_line_spacing_type = ls_type;
@@ -795,6 +851,48 @@ fn parse_border_fill(
 
 // ─── TabDef ───
 
+fn parse_tab_item(ce: &quick_xml::events::BytesStart) -> TabItem {
+    let mut item = TabItem::default();
+    for attr in ce.attributes().flatten() {
+        match attr.key.as_ref() {
+            b"pos" => item.position = parse_u32(&attr),
+            b"type" => {
+                item.tab_type = match attr_str(&attr).as_str() {
+                    "LEFT" => 0,
+                    "RIGHT" => 1,
+                    "CENTER" => 2,
+                    "DECIMAL" => 3,
+                    _ => 0,
+                };
+            }
+            b"leader" => {
+                // HWP fill_type: 0=없음, 1=실선, 2=파선, 3=점선,
+                // 4=일점쇄선, 5=이점쇄선, 6=긴파선, 7=원형점선,
+                // 8=이중실선, 9=얇고굵은이중선, 10=굵고얇은이중선, 11=삼중선
+                // HWPML leader 명칭은 HWP 바이너리 fill_type과 직접 대응
+                // "DASH"=점선(3), "DOT"=파선(2) — HWPML 명명이 직관과 반대
+                item.fill_type = match attr_str(&attr).as_str() {
+                    "NONE" => 0,
+                    "SOLID" => 1,
+                    "DOT" => 2,         // 파선
+                    "DASH" => 3,        // 점선
+                    "DASH_DOT" => 4,    // 일점쇄선
+                    "DASH_DOT_DOT" => 5,// 이점쇄선
+                    "LONG_DASH" => 6,   // 긴파선
+                    "CIRCLE" => 7,      // 원형점선
+                    "DOUBLE_LINE" => 8, // 이중실선
+                    "THIN_THICK" => 9,  // 얇고 굵은 이중선
+                    "THICK_THIN" => 10, // 굵고 얇은 이중선
+                    "TRIM" => 11,       // 얇고 굵고 얇은 삼중선
+                    _ => 0,
+                };
+            }
+            _ => {}
+        }
+    }
+    item
+}
+
 fn parse_tab_def(
     e: &quick_xml::events::BytesStart,
     reader: &mut Reader<&[u8]>,
@@ -812,44 +910,55 @@ fn parse_tab_def(
 
     if !is_empty_event(e) {
         let mut buf = Vec::new();
+        let mut in_hwpunitchar_case = false;
+        let mut in_default = false;
+        let mut found_case = false;
+        let mut default_tabs: Vec<TabItem> = Vec::new();
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Empty(ref ce)) | Ok(Event::Start(ref ce)) => {
+                Ok(Event::Start(ref ce)) => {
                     let cname = ce.name(); let local = local_name(cname.as_ref());
-                    if local == b"tabItem" {
-                        let mut item = TabItem::default();
-                        for attr in ce.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"pos" => item.position = parse_u32(&attr),
-                                b"type" => {
-                                    let val = attr_str(&attr);
-                                    item.tab_type = match val.as_str() {
-                                        "LEFT" => 0,
-                                        "RIGHT" => 1,
-                                        "CENTER" => 2,
-                                        "DECIMAL" => 3,
-                                        _ => 0,
-                                    };
-                                }
-                                b"leader" => {
-                                    let val = attr_str(&attr);
-                                    item.fill_type = match val.as_str() {
-                                        "NONE" => 0,
-                                        "SOLID" => 1,
-                                        "DASH" => 2,
-                                        "DOT" => 3,
-                                        _ => 0,
-                                    };
-                                }
-                                _ => {}
+                    match local {
+                        b"case" => {
+                            let is_hwpunitchar = ce.attributes().flatten().any(|attr| {
+                                attr_str(&attr).contains("HwpUnitChar")
+                            });
+                            if is_hwpunitchar {
+                                in_hwpunitchar_case = true;
                             }
                         }
-                        td.tabs.push(item);
+                        b"default" => {
+                            in_default = true;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Empty(ref ce)) => {
+                    let cname = ce.name(); let local = local_name(cname.as_ref());
+                    if local == b"tabItem" {
+                        let mut item = parse_tab_item(ce);
+                        if in_hwpunitchar_case {
+                            // HwpUnitChar 값은 실제 HWPUNIT(1× 스케일)이므로
+                            // HWP 바이너리와 동일한 2× 스케일로 변환
+                            item.position *= 2;
+                            td.tabs.push(item);
+                            found_case = true;
+                        } else if in_default {
+                            // default 값은 이미 2× 스케일
+                            default_tabs.push(item);
+                        } else {
+                            // switch 바깥의 직접 tabItem (단위 불명, 그대로 사용)
+                            td.tabs.push(item);
+                        }
                     }
                 }
                 Ok(Event::End(ref ee)) => {
-                    let ename = ee.name(); if local_name(ename.as_ref()) == b"tabPr" {
-                        break;
+                    let ename = ee.name(); let local = local_name(ename.as_ref());
+                    match local {
+                        b"case" => { in_hwpunitchar_case = false; }
+                        b"default" => { in_default = false; }
+                        b"tabPr" => break,
+                        _ => {}
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -857,6 +966,10 @@ fn parse_tab_def(
                 _ => {}
             }
             buf.clear();
+        }
+        // HwpUnitChar case가 없으면 default 값 적용
+        if !found_case && !default_tabs.is_empty() {
+            td.tabs = default_tabs;
         }
     }
 

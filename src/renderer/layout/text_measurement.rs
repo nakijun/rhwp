@@ -105,28 +105,53 @@ fn measure_segment_from(
 
 /// 탭 문자의 위치로부터 탭 리더 정보를 추출한다.
 pub fn extract_tab_leaders(text: &str, positions: &[f64], style: &TextStyle) -> Vec<TabLeaderInfo> {
-    if style.tab_stops.is_empty() && !style.auto_tab_right {
-        return Vec::new();
-    }
+    extract_tab_leaders_with_extended(text, positions, style, &[])
+}
+
+/// 탭 리더 추출 (tab_extended 지원)
+/// tab_extended: HWPX 인라인 탭 또는 HWP 탭 확장 데이터 (ext[1] = leader/fill_type)
+pub fn extract_tab_leaders_with_extended(
+    text: &str, positions: &[f64], style: &TextStyle, tab_extended: &[[u16; 7]],
+) -> Vec<TabLeaderInfo> {
     let tab_w = if style.default_tab_width > 0.0 { style.default_tab_width } else { 48.0 };
     let mut leaders = Vec::new();
+    let mut tab_idx = 0usize; // tab_extended 인덱스
     for (i, c) in text.chars().enumerate() {
         if c == '\t' && i + 1 < positions.len() {
             let before_x = positions[i];
             let after_x = positions[i + 1];
-            let abs_before = style.line_x_offset + before_x;
-            // 어느 탭 정지가 매칭되었는지 역추적
-            let (_, _, fill_type) = find_next_tab_stop(
-                abs_before, &style.tab_stops, tab_w,
-                style.auto_tab_right, style.available_width,
-            );
+
+            // 1. tab_extended에서 leader 가져오기 (HWPX 인라인 탭)
+            let ext_fill = if tab_idx < tab_extended.len() {
+                tab_extended[tab_idx][1] as u8 // ext[1] = leader/fill_type
+            } else {
+                0
+            };
+
+            // 2. TabDef에서 fill_type 가져오기 (HWP TabDef)
+            let tabdef_fill = if !style.tab_stops.is_empty() || style.auto_tab_right {
+                let abs_before = style.line_x_offset + before_x;
+                let (_, _, ft) = find_next_tab_stop(
+                    abs_before, &style.tab_stops, tab_w,
+                    style.auto_tab_right, style.available_width,
+                );
+                ft
+            } else {
+                0
+            };
+
+            // 둘 중 하나라도 fill이 있으면 리더 추가
+            // 오른쪽 정렬 텍스트 앞에 공백 1개 간격 확보
+            let fill_type = if ext_fill > 0 { ext_fill } else { tabdef_fill };
             if fill_type > 0 && after_x > before_x + 1.0 {
+                let space_gap = style.font_size * 0.25;
                 leaders.push(TabLeaderInfo {
                     start_x: before_x,
-                    end_x: after_x,
+                    end_x: (after_x - space_gap).max(before_x),
                     fill_type,
                 });
             }
+            tab_idx += 1;
         }
     }
     leaders
@@ -225,6 +250,7 @@ impl TextMeasurer for EmbeddedTextMeasurer {
             w
         };
 
+        let mut tab_char_idx = 0usize; // inline_tabs 인덱스
         for i in 0..char_count {
             let c = chars[i];
             if cluster_len[i] == 0 {
@@ -232,7 +258,27 @@ impl TextMeasurer for EmbeddedTextMeasurer {
                 continue;
             }
             if c == '\t' {
-                if has_custom_tabs {
+                // HWPX 인라인 탭: inline_tabs에서 width/type 사용
+                if tab_char_idx < style.inline_tabs.len() {
+                    let ext = &style.inline_tabs[tab_char_idx];
+                    let tab_width_px = ext[0] as f64 * 96.0 / 7200.0;
+                    let tab_type = ext[2];
+                    let tab_target = x + tab_width_px;
+                    match tab_type {
+                        1 => { // 오른쪽
+                            let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
+                            x = (tab_target - seg_w).max(x);
+                        }
+                        2 => { // 가운데
+                            let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
+                            x = (tab_target - seg_w / 2.0).max(x);
+                        }
+                        _ => { // 왼쪽(0)
+                            x = tab_target.max(x);
+                        }
+                    }
+                    tab_char_idx += 1;
+                } else if has_custom_tabs {
                     let abs_x = style.line_x_offset + x;
                     let (tab_pos, tab_type, _) = find_next_tab_stop(
                         abs_x, &style.tab_stops, tab_w,
@@ -242,21 +288,27 @@ impl TextMeasurer for EmbeddedTextMeasurer {
                     match tab_type {
                         1 => { // 오른쪽
                             let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
+                            if tab_type == 1 {
+                                eprintln!("[DEBUG_TAB_POS] RIGHT tab: abs_x={:.2}, tab_pos={:.2}, line_x_offset={:.2}, rel_tab={:.2}, seg_w={:.2}, avail_w={:.2}, result_x={:.2}",
+                                    abs_x, tab_pos, style.line_x_offset, rel_tab, seg_w, style.available_width, (rel_tab - seg_w).max(x));
+                            }
                             x = (rel_tab - seg_w).max(x);
                         }
                         2 => { // 가운데
                             let seg_w = measure_segment_from(&chars, &cluster_len, i + 1, &char_width);
                             x = (rel_tab - seg_w / 2.0).max(x);
                         }
-                        _ => { // 왼쪽(0), 소수점(3) → 왼쪽과 동일 처리
+                        _ => { // 왼쪽(0), 소수점(3)
                             x = rel_tab.max(x);
                         }
                     }
+                    tab_char_idx += 1;
                 } else {
-                    // 기본 등간격 탭: 라인 절대 위치(line_x_offset + x) 기준으로 계산
+                    // 기본 등간격 탭
                     let abs_x = style.line_x_offset + x;
                     let next_abs = ((abs_x / tab_w).floor() + 1.0) * tab_w;
                     x = (next_abs - style.line_x_offset).max(x);
+                    tab_char_idx += 1;
                 }
                 positions.push(x);
                 continue;
@@ -590,6 +642,7 @@ pub(crate) fn resolved_to_text_style(styles: &ResolvedStyleSet, char_style_id: u
             available_width: 0.0,
             line_x_offset: 0.0,
             tab_leaders: Vec::new(),
+            inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
             extra_char_spacing: 0.0,
             outline_type: cs.outline_type,

@@ -159,9 +159,10 @@ fn parse_paragraph(
                         char_shape_changes.push((utf16_pos, current_char_shape_id));
                     }
                     b"t" => {
-                        // 텍스트 읽기
-                        let text = read_text_content(reader)?;
+                        // 텍스트 읽기 (탭 확장 데이터 포함)
+                        let (text, tab_exts) = read_text_content_with_tabs(reader)?;
                         text_parts.push(text);
+                        para.tab_extended.extend(tab_exts);
                     }
                     b"tbl" => {
                         // 표 파싱
@@ -238,6 +239,17 @@ fn parse_paragraph(
                     }
                     b"tab" => {
                         text_parts.push("\t".to_string());
+                        // HWPX 인라인 탭 속성 파싱 → tab_extended에 저장
+                        let mut ext = [0u16; 7];
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"width" => ext[0] = parse_u16(&attr),
+                                b"leader" => ext[1] = parse_u16(&attr),
+                                b"type" => ext[2] = parse_u16(&attr),
+                                _ => {}
+                            }
+                        }
+                        para.tab_extended.push(ext);
                     }
                     b"lineseg" => {
                         // 단독 lineseg (linesegarray 밖에 나올 경우)
@@ -267,17 +279,19 @@ fn parse_paragraph(
         .join("");
 
     // char_offsets 생성 (각 문자의 UTF-16 위치)
+    // HWP 바이너리에서 탭 문자는 확장 데이터 포함 8 code unit을 차지하므로
+    // LINE_SEG text_start와 올바르게 매핑되려면 탭도 8 code unit으로 계산
     let mut utf16_pos: u32 = 0;
     let ctrl_offset: u32 = (para.controls.len() as u32) * 8; // 각 컨트롤 = 8 UTF-16 유닛
     para.char_offsets = para.text.chars().map(|c| {
         let pos = utf16_pos + ctrl_offset;
-        utf16_pos += if (c as u32) > 0xFFFF { 2 } else { 1 };
+        utf16_pos += if c == '\t' { 8 } else if (c as u32) > 0xFFFF { 2 } else { 1 };
         pos
     }).collect();
 
     // char_count 설정 (텍스트 + 컨트롤 + 끝 마커)
     let text_utf16_len: u32 = para.text.chars()
-        .map(|c| if (c as u32) > 0xFFFF { 2u32 } else { 1 })
+        .map(|c| if c == '\t' { 8u32 } else if (c as u32) > 0xFFFF { 2 } else { 1 })
         .sum();
     para.char_count = text_utf16_len + ctrl_offset + 1; // +1 for 끝 마커
     para.has_para_text = !para.text.is_empty() || !para.controls.is_empty();
@@ -448,8 +462,15 @@ fn parse_lineseg_element(e: &quick_xml::events::BytesStart) -> LineSeg {
 }
 
 /// <hp:t> 텍스트 컨텐츠를 읽는다.
+/// 탭 확장 데이터도 함께 반환 (HWPX 인라인 탭의 leader/type/width)
 fn read_text_content(reader: &mut Reader<&[u8]>) -> Result<String, HwpxError> {
+    let (text, _) = read_text_content_with_tabs(reader)?;
+    Ok(text)
+}
+
+fn read_text_content_with_tabs(reader: &mut Reader<&[u8]>) -> Result<(String, Vec<[u16; 7]>), HwpxError> {
     let mut text = String::new();
+    let mut tab_ext_buf: Vec<[u16; 7]> = Vec::new();
     let mut buf = Vec::new();
 
     loop {
@@ -466,7 +487,20 @@ fn read_text_content(reader: &mut Reader<&[u8]>) -> Result<String, HwpxError> {
                 let cname = ce.name(); let local = local_name(cname.as_ref());
                 match local {
                     b"lineBreak" | b"columnBreak" => text.push('\n'),
-                    b"tab" => text.push('\t'),
+                    b"tab" => {
+                        text.push('\t');
+                        // HWPX 인라인 탭 속성 → tab_ext_buf에 임시 저장
+                        let mut ext = [0u16; 7];
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"width" => ext[0] = parse_u16(&attr),
+                                b"leader" => ext[1] = parse_u16(&attr),
+                                b"type" => ext[2] = parse_u16(&attr),
+                                _ => {}
+                            }
+                        }
+                        tab_ext_buf.push(ext);
+                    }
                     b"nbSpace" => text.push('\u{00A0}'),
                     b"fwSpace" => text.push('\u{2007}'),
                     _ => {}
@@ -479,7 +513,7 @@ fn read_text_content(reader: &mut Reader<&[u8]>) -> Result<String, HwpxError> {
         buf.clear();
     }
 
-    Ok(text)
+    Ok((text, tab_ext_buf))
 }
 
 // ─── Table ───
@@ -1446,10 +1480,112 @@ fn parse_line_shape_attr(e: &quick_xml::events::BytesStart) -> ShapeBorderLine {
                 }
             }
             b"width" => bl.width = parse_i32(&attr),
+            b"style" => {
+                // 선 스타일 → attr 비트 플래그 (하위 바이트)
+                let style_val: u8 = match attr_str(&attr).as_str() {
+                    "NONE" => 0,
+                    "SOLID" => 1,
+                    "DASH" => 2,
+                    "DOT" => 3,
+                    "DASH_DOT" => 4,
+                    "DASH_DOT_DOT" => 5,
+                    "LONG_DASH" => 6,
+                    "CIRCLE" => 7,
+                    "DOUBLE_SLIM" => 8,
+                    "SLIM_THICK" => 9,
+                    "THICK_SLIM" => 10,
+                    "SLIM_THICK_SLIM" => 11,
+                    _ => 1,
+                };
+                bl.attr = (bl.attr & !0xFF) | style_val as u32;
+            }
+            b"outlineStyle" => {
+                bl.outline_style = match attr_str(&attr).as_str() {
+                    "NORMAL" => 0,
+                    "OUTER" => 1,
+                    "INNER" => 2,
+                    _ => 0,
+                };
+            }
             _ => {}
         }
     }
     bl
+}
+
+/// shape 내부의 `<hp:fillBrush>` 자식 요소를 파싱하여 Fill을 반환한다.
+fn parse_shape_fill_brush(reader: &mut Reader<&[u8]>) -> Result<Fill, HwpxError> {
+    use crate::model::style::{FillType, SolidFill, ImageFill, GradientFill, ImageFillMode};
+    let mut fill = Fill::default();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Empty(ref ce)) | Ok(Event::Start(ref ce)) => {
+                let cname = ce.name(); let local = local_name(cname.as_ref());
+                match local {
+                    b"winBrush" => {
+                        fill.fill_type = FillType::Solid;
+                        let mut solid = SolidFill::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"faceColor" => solid.background_color = parse_color(&attr),
+                                b"hatchColor" => solid.pattern_color = parse_color(&attr),
+                                b"alpha" => {
+                                    let val = attr_str(&attr);
+                                    if let Ok(f) = val.parse::<f64>() {
+                                        fill.alpha = (f.clamp(0.0, 1.0) * 255.0) as u8;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        fill.solid = Some(solid);
+                    }
+                    b"gradation" => {
+                        fill.fill_type = FillType::Gradient;
+                        let mut grad = GradientFill::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"type" => grad.gradient_type = parse_i16(&attr),
+                                b"angle" => grad.angle = parse_i16(&attr),
+                                b"centerX" => grad.center_x = parse_i16(&attr),
+                                b"centerY" => grad.center_y = parse_i16(&attr),
+                                _ => {}
+                            }
+                        }
+                        fill.gradient = Some(grad);
+                    }
+                    b"imgBrush" => {
+                        fill.fill_type = FillType::Image;
+                        let mut img = ImageFill::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"mode" => {
+                                    img.fill_mode = match attr_str(&attr).as_str() {
+                                        "TILE" | "TILE_ALL" => ImageFillMode::TileAll,
+                                        "FIT" | "FIT_TO_SIZE" | "STRETCH" | "TOTAL" => ImageFillMode::FitToSize,
+                                        "CENTER" => ImageFillMode::Center,
+                                        _ => ImageFillMode::TileAll,
+                                    };
+                                }
+                                _ => {}
+                            }
+                        }
+                        fill.image = Some(img);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(ref ee)) => {
+                if local_name(ee.name().as_ref()) == b"fillBrush" { break; }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(HwpxError::XmlError(format!("fillBrush: {}", e))),
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(fill)
 }
 
 /// `<hp:drawText>` 내부의 `<hp:subList>` → `<hp:p>` 문단을 파싱한다.
@@ -1522,6 +1658,7 @@ fn parse_shape_object(
     let mut common = CommonObjAttr::default();
     let mut shape_attr = ShapeComponentAttr::default();
     let mut border_line = ShapeBorderLine::default();
+    let mut fill = Fill::default();
     let mut text_box: Option<TextBox> = None;
     let mut has_pos = false;
     let mut x_coords = [0i32; 4];
@@ -1587,6 +1724,12 @@ fn parse_shape_object(
                     b"renderingInfo" => {
                         parse_rendering_info(reader, &mut shape_attr)?;
                     }
+                    b"fillBrush" => {
+                        fill = parse_shape_fill_brush(reader)?;
+                    }
+                    b"shadow" => {
+                        // shadow는 무시 (Start 이벤트인 경우 내부 소비)
+                    }
                     _ => {}
                 }
             }
@@ -1603,10 +1746,18 @@ fn parse_shape_object(
         buf.clear();
     }
 
+    // curSz width=0이면 orgSz 또는 sz에서 폴백
+    if shape_attr.current_width == 0 && shape_attr.original_width > 0 {
+        shape_attr.current_width = shape_attr.original_width;
+        if common.width == 0 {
+            common.width = shape_attr.original_width;
+        }
+    }
+
     let drawing = DrawingObjAttr {
         shape_attr,
         border_line,
-        fill: Fill::default(),
+        fill,
         text_box,
         ..Default::default()
     };
@@ -1770,6 +1921,9 @@ fn parse_ctrl(
                     b"autoNum" => {
                         let ctrl = parse_ctrl_autonum(ce, reader)?;
                         controls.push(ctrl);
+                        // AutoNumber: 공백 placeholder 추가 (HWP 바이너리와 동일)
+                        // → apply_auto_numbers_to_composed에서 "  "(연속 2공백)으로 번호 삽입
+                        text_parts.push(" ".to_string());
                     }
                     b"hiddenComment" => {
                         let ctrl = parse_ctrl_hidden_comment(reader)?;
@@ -1838,6 +1992,7 @@ fn parse_ctrl(
                     b"autoNum" => {
                         let an = parse_autonum_attrs(ce);
                         controls.push(Control::AutoNumber(an));
+                        text_parts.push(" ".to_string());
                     }
                     b"fieldBegin" => {
                         let f = parse_field_begin_attrs(ce);
@@ -2515,10 +2670,11 @@ fn parse_equation(
 // ─── 유틸리티 (section 전용) ───
 
 /// 텍스트 파트들의 UTF-16 길이 합산
+/// 탭 문자는 HWP 바이너리와 동일하게 8 code unit으로 계산
 fn calc_utf16_len_from_parts(parts: &[String]) -> u32 {
     parts.iter()
         .flat_map(|s| s.chars())
-        .map(|c| if (c as u32) > 0xFFFF { 2u32 } else { 1 })
+        .map(|c| if c == '\t' { 8u32 } else if (c as u32) > 0xFFFF { 2 } else { 1 })
         .sum()
 }
 

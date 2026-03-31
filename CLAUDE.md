@@ -101,6 +101,21 @@ rhwp dump sample.hwp -s 2 -p 45      # 섹션 2, 문단 45만 덤프
   [0]   [outer_margin] left=1.0mm top=2.0mm right=1.0mm bottom=7.0mm
 ```
 
+### IR 비교 (`ir-diff`)
+
+동일 문서의 HWPX와 HWP 파일을 파싱하여 IR 차이를 자동 검출한다.
+
+```bash
+rhwp ir-diff sample.hwpx sample.hwp                    # 전체 비교
+rhwp ir-diff sample.hwpx sample.hwp -s 0 -p 810        # 특정 문단만 비교
+rhwp ir-diff sample.hwpx sample.hwp 2>&1 | grep "\[PS " # ParaShape 차이만
+rhwp ir-diff sample.hwpx sample.hwp 2>&1 | tail -1      # 차이 건수만
+```
+
+비교 항목: text, char_count, char_offsets, char_shapes, line_segs, controls, tab_extended, ParaShape(여백/줄간격/탭), TabDef(위치/종류/채움).
+
+상세 매뉴얼: `mydocs/manual/ir_diff_command.md`
+
 ### 디버깅 워크플로우
 
 레이아웃/간격 버그 디버깅 시 다음 순서로 진행한다:
@@ -108,6 +123,11 @@ rhwp dump sample.hwp -s 2 -p 45      # 섹션 2, 문단 45만 덤프
 1. `export-svg --debug-overlay` → SVG에서 문단/표 식별 (`s{섹션}:pi={인덱스} y={좌표}`)
 2. `dump-pages -p N` → 해당 페이지의 문단 배치 목록과 높이 확인
 3. `dump -s N -p M` → 특정 문단의 ParaShape, LINE_SEG, 표 속성 상세 조사
+
+HWPX↔HWP 불일치 디버깅 시 추가 단계:
+
+4. `ir-diff sample.hwpx sample.hwp` → IR 차이 자동 검출
+5. HWPX XML 원본 확인 (header.xml / section0.xml)
 
 코드 수정 없이 전 과정 수행 가능하다.
 

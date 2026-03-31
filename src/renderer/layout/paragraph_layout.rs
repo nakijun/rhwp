@@ -11,7 +11,7 @@ use super::super::composer::{ComposedParagraph, compose_paragraph};
 use super::super::style_resolver::ResolvedStyleSet;
 use super::super::{TextStyle, ShapeStyle, hwpunit_to_px, format_number, NumberFormat as NumFmt, AutoNumberCounter};
 use super::{LayoutEngine, CellContext};
-use super::text_measurement::{resolved_to_text_style, estimate_text_width, compute_char_positions, extract_tab_leaders, find_next_tab_stop};
+use super::text_measurement::{resolved_to_text_style, estimate_text_width, compute_char_positions, extract_tab_leaders_with_extended, find_next_tab_stop};
 use super::border_rendering::create_border_line_nodes;
 use super::utils::{resolve_numbering_id, expand_numbering_format, numbering_format_to_number_format, find_bin_data};
 
@@ -1026,6 +1026,7 @@ impl LayoutEngine {
                 text_style.tab_stops = tab_stops.clone();
                 text_style.auto_tab_right = auto_tab_right;
                 text_style.available_width = available_width;
+                text_style.inline_tabs = composed.tab_extended.clone();
                 // 교차 run 오른쪽/가운데 탭: 이전 run이 \t로 끝났고
                 // 해당 탭이 오른쪽/가운데 탭이면 이 run을 역방향으로 이동
                 if let Some((tab_pos, tab_type)) = pending_right_tab_render.take() {
@@ -1055,9 +1056,12 @@ impl LayoutEngine {
                     estimate_text_width(&run.text, &text_style)
                 };
                 // 탭 리더 계산: 탭이 포함된 run에서 채움 기호 정보 추출
+                // inline_tabs를 일시 제거하여 tab_stops 기반 위치 계산과 일관되게 함
                 if has_tabs && run.text.contains('\t') {
+                    let saved_inline_tabs = std::mem::take(&mut text_style.inline_tabs);
                     let positions = compute_char_positions(&run.text, &text_style);
-                    text_style.tab_leaders = extract_tab_leaders(&run.text, &positions, &text_style);
+                    text_style.inline_tabs = saved_inline_tabs;
+                    text_style.tab_leaders = extract_tab_leaders_with_extended(&run.text, &positions, &text_style, &composed.tab_extended);
                 }
                 // 교차 run 오른쪽/가운데 탭 감지:
                 // run이 \t로 끝나면 해당 탭의 종류를 확인하여 다음 run 조정에 사용
@@ -1351,7 +1355,7 @@ impl LayoutEngine {
                             // 탭 리더 계산
                             if has_tabs && seg_text.contains('\t') {
                                 let positions = compute_char_positions(&seg_text, &seg_style);
-                                seg_style.tab_leaders = extract_tab_leaders(&seg_text, &positions, &seg_style);
+                                seg_style.tab_leaders = extract_tab_leaders_with_extended(&seg_text, &positions, &seg_style, &composed.tab_extended);
                             }
                             let seg_w = estimate_text_width(&seg_text, &seg_style);
                             let seg_char_count = tac_rel - seg_start;
@@ -1504,7 +1508,7 @@ impl LayoutEngine {
                         seg_style.line_x_offset = x - col_area.x;
                         if has_tabs && remaining.contains('\t') {
                             let positions = compute_char_positions(&remaining, &seg_style);
-                            seg_style.tab_leaders = extract_tab_leaders(&remaining, &positions, &seg_style);
+                            seg_style.tab_leaders = extract_tab_leaders_with_extended(&remaining, &positions, &seg_style, &composed.tab_extended);
                         }
                         let seg_w = estimate_text_width(&remaining, &seg_style);
                         if !skip_text_for_inline_shape {
@@ -2281,6 +2285,7 @@ impl LayoutEngine {
                 };
 
                 // 각 줄의 텍스트에서 연속된 두 공백("  ")을 찾아 번호로 대체
+                // HWP/HWPX 모두 AutoNumber 위치에 공백 placeholder 삽입
                 for line in &mut composed.lines {
                     for run in &mut line.runs {
                         if let Some(pos) = run.text.find("  ") {

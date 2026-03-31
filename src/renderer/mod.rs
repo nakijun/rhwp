@@ -102,6 +102,8 @@ pub struct TextStyle {
     pub line_x_offset: f64,
     /// 탭 리더 정보 (compute_char_positions 후 채움)
     pub tab_leaders: Vec<TabLeaderInfo>,
+    /// HWPX 인라인 탭 확장 데이터 ([width, leader, type, ...])
+    pub inline_tabs: Vec<[u16; 7]>,
     /// 양쪽 정렬용: 공백 문자당 추가 간격 (px)
     pub extra_word_spacing: f64,
     /// 배분/나눔 정렬용: 글자당 추가 간격 (px)
@@ -156,6 +158,7 @@ impl Default for TextStyle {
             available_width: 0.0,
             line_x_offset: 0.0,
             tab_leaders: Vec::new(),
+            inline_tabs: Vec::new(),
             extra_word_spacing: 0.0,
             extra_char_spacing: 0.0,
             outline_type: 0,

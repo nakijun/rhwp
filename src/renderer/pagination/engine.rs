@@ -556,7 +556,8 @@ impl Paginator {
             } else {
                 trailing_ls
             };
-            st.current_height + (para_height - effective_trailing) <= available_now
+            // 부동소수점 누적 오차 허용 (0.5px ≈ 0.13mm)
+            st.current_height + (para_height - effective_trailing) <= available_now + 0.5
         } {
             // 문단 전체가 현재 페이지에 들어감
             st.current_items.push(PageItem::FullParagraph {

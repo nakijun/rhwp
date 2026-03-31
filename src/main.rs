@@ -19,6 +19,7 @@ fn main() {
         Some("test-caption") => test_caption(&args[2..]),
         Some("gen-table") => gen_table(&args[2..]),
         Some("test-field") => test_field_roundtrip(&args[2..]),
+        Some("ir-diff") => ir_diff(&args[2..]),
         _ => {
             println!("rhwp v{}", rhwp::version());
             println!("사용법: rhwp <명령> [옵션]");
@@ -56,6 +57,9 @@ fn print_help() {
     println!();
     println!("  convert <입력.hwp> <출력.hwp>");
     println!("      배포용(읽기전용) HWP를 편집 가능한 HWP로 변환");
+    println!();
+    println!("  ir-diff <파일A.hwpx> <파일B.hwp> [-s <구역>] [-p <문단>]");
+    println!("      두 파일의 IR(중간표현) 비교 (HWPX↔HWP 불일치 검출)");
     println!();
     println!("옵션:");
     println!("  -h, --help      도움말 표시");
@@ -1560,4 +1564,232 @@ fn test_field_roundtrip(args: &[String]) {
         let name = fi.field.field_name().unwrap_or("(이름없음)");
         println!("  {} = \"{}\"", name, fi.value);
     }
+}
+
+fn ir_diff(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!("사용법: rhwp ir-diff <파일A> <파일B> [-s <구역>] [-p <문단>]");
+        return;
+    }
+
+    let file_a = &args[0];
+    let file_b = &args[1];
+    let mut section_filter: Option<usize> = None;
+    let mut para_filter: Option<usize> = None;
+
+    let mut i = 2;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-s" | "--section" if i + 1 < args.len() => {
+                section_filter = args[i + 1].parse().ok();
+                i += 2;
+            }
+            "-p" | "--para" if i + 1 < args.len() => {
+                para_filter = args[i + 1].parse().ok();
+                i += 2;
+            }
+            _ => { i += 1; }
+        }
+    }
+
+    let data_a = match fs::read(file_a) {
+        Ok(d) => d,
+        Err(e) => { eprintln!("오류: {} 읽기 실패: {}", file_a, e); return; }
+    };
+    let data_b = match fs::read(file_b) {
+        Ok(d) => d,
+        Err(e) => { eprintln!("오류: {} 읽기 실패: {}", file_b, e); return; }
+    };
+
+    let doc_a = match rhwp::parser::parse_document(&data_a) {
+        Ok(d) => d,
+        Err(e) => { eprintln!("오류: {} 파싱 실패: {:?}", file_a, e); return; }
+    };
+    let doc_b = match rhwp::parser::parse_document(&data_b) {
+        Ok(d) => d,
+        Err(e) => { eprintln!("오류: {} 파싱 실패: {:?}", file_b, e); return; }
+    };
+
+    let name_a = Path::new(file_a).file_name().unwrap_or_default().to_string_lossy();
+    let name_b = Path::new(file_b).file_name().unwrap_or_default().to_string_lossy();
+    println!("=== IR 비교: {} vs {} ===", name_a, name_b);
+
+    // 구역 수 비교
+    if doc_a.sections.len() != doc_b.sections.len() {
+        println!("[차이] 구역 수: A={} vs B={}", doc_a.sections.len(), doc_b.sections.len());
+    }
+
+    let sec_count = doc_a.sections.len().min(doc_b.sections.len());
+    let mut total_diffs = 0u32;
+
+    for sec_idx in 0..sec_count {
+        if let Some(sf) = section_filter {
+            if sec_idx != sf { continue; }
+        }
+
+        let sec_a = &doc_a.sections[sec_idx];
+        let sec_b = &doc_b.sections[sec_idx];
+
+        if sec_a.paragraphs.len() != sec_b.paragraphs.len() {
+            println!("[차이] 구역 {}: 문단 수 A={} vs B={}", sec_idx, sec_a.paragraphs.len(), sec_b.paragraphs.len());
+            total_diffs += 1;
+        }
+
+        let para_count = sec_a.paragraphs.len().min(sec_b.paragraphs.len());
+        for pi in 0..para_count {
+            if let Some(pf) = para_filter {
+                if pi != pf { continue; }
+            }
+
+            let pa = &sec_a.paragraphs[pi];
+            let pb = &sec_b.paragraphs[pi];
+            let mut diffs: Vec<String> = Vec::new();
+
+            // 텍스트 비교
+            if pa.text != pb.text {
+                diffs.push(format!("text: A={:?} vs B={:?}",
+                    pa.text.chars().take(30).collect::<String>(),
+                    pb.text.chars().take(30).collect::<String>()));
+            }
+
+            // char_count 비교
+            if pa.char_count != pb.char_count {
+                diffs.push(format!("cc: A={} vs B={}", pa.char_count, pb.char_count));
+            }
+
+            // char_offsets 비교
+            if pa.char_offsets != pb.char_offsets {
+                let len_a = pa.char_offsets.len();
+                let len_b = pb.char_offsets.len();
+                if len_a != len_b {
+                    diffs.push(format!("char_offsets len: A={} vs B={}", len_a, len_b));
+                } else {
+                    let first_diff = pa.char_offsets.iter().zip(pb.char_offsets.iter())
+                        .enumerate()
+                        .find(|(_, (a, b))| a != b);
+                    if let Some((idx, (a, b))) = first_diff {
+                        diffs.push(format!("char_offsets[{}]: A={} vs B={}", idx, a, b));
+                    }
+                }
+            }
+
+            // para_shape_id 비교
+            if pa.para_shape_id != pb.para_shape_id {
+                diffs.push(format!("ps_id: A={} vs B={}", pa.para_shape_id, pb.para_shape_id));
+            }
+
+            // tab_extended 비교
+            if pa.tab_extended.len() != pb.tab_extended.len() {
+                diffs.push(format!("tab_ext count: A={} vs B={}", pa.tab_extended.len(), pb.tab_extended.len()));
+            } else {
+                for (ti, (ta, tb)) in pa.tab_extended.iter().zip(pb.tab_extended.iter()).enumerate() {
+                    if ta != tb {
+                        diffs.push(format!("tab_ext[{}]: A={:?} vs B={:?}", ti, ta, tb));
+                        break;
+                    }
+                }
+            }
+
+            // LINE_SEG 비교
+            if pa.line_segs.len() != pb.line_segs.len() {
+                diffs.push(format!("line_segs count: A={} vs B={}", pa.line_segs.len(), pb.line_segs.len()));
+            } else {
+                for (li, (la, lb)) in pa.line_segs.iter().zip(pb.line_segs.iter()).enumerate() {
+                    if la.text_start != lb.text_start {
+                        diffs.push(format!("ls[{}].ts: A={} vs B={}", li, la.text_start, lb.text_start));
+                    }
+                    if la.line_height != lb.line_height {
+                        diffs.push(format!("ls[{}].lh: A={} vs B={}", li, la.line_height, lb.line_height));
+                    }
+                    if la.segment_width != lb.segment_width {
+                        diffs.push(format!("ls[{}].sw: A={} vs B={}", li, la.segment_width, lb.segment_width));
+                    }
+                }
+            }
+
+            // 컨트롤 수 비교
+            if pa.controls.len() != pb.controls.len() {
+                diffs.push(format!("controls: A={} vs B={}", pa.controls.len(), pb.controls.len()));
+            }
+
+            // char_shapes 비교
+            if pa.char_shapes.len() != pb.char_shapes.len() {
+                diffs.push(format!("char_shapes count: A={} vs B={}", pa.char_shapes.len(), pb.char_shapes.len()));
+            } else {
+                for (ci, (ca, cb)) in pa.char_shapes.iter().zip(pb.char_shapes.iter()).enumerate() {
+                    if ca.start_pos != cb.start_pos {
+                        diffs.push(format!("cs[{}].pos: A={} vs B={}", ci, ca.start_pos, cb.start_pos));
+                        break;
+                    }
+                    if ca.char_shape_id != cb.char_shape_id {
+                        diffs.push(format!("cs[{}].id: A={} vs B={}", ci, ca.char_shape_id, cb.char_shape_id));
+                        break;
+                    }
+                }
+            }
+
+            if !diffs.is_empty() {
+                let text_preview: String = pa.text.chars().take(30).collect();
+                println!("\n--- 문단 {}.{} --- \"{}\"", sec_idx, pi, text_preview);
+                for d in &diffs {
+                    println!("  [차이] {}", d);
+                }
+                total_diffs += diffs.len() as u32;
+            }
+        }
+    }
+
+    // doc_info 비교: ParaShape
+    {
+        let ps_a = &doc_a.doc_info.para_shapes;
+        let ps_b = &doc_b.doc_info.para_shapes;
+        if ps_a.len() != ps_b.len() {
+            println!("\n[차이] ParaShape 수: A={} vs B={}", ps_a.len(), ps_b.len());
+            total_diffs += 1;
+        }
+        let ps_count = ps_a.len().min(ps_b.len());
+        for i in 0..ps_count {
+            let a = &ps_a[i]; let b = &ps_b[i];
+            let mut ps_diffs: Vec<String> = Vec::new();
+            if a.margin_left != b.margin_left { ps_diffs.push(format!("ml: {}vs{}", a.margin_left, b.margin_left)); }
+            if a.margin_right != b.margin_right { ps_diffs.push(format!("mr: {}vs{}", a.margin_right, b.margin_right)); }
+            if a.indent != b.indent { ps_diffs.push(format!("indent: {}vs{}", a.indent, b.indent)); }
+            if a.tab_def_id != b.tab_def_id { ps_diffs.push(format!("tab_def: {}vs{}", a.tab_def_id, b.tab_def_id)); }
+            if a.spacing_before != b.spacing_before { ps_diffs.push(format!("sb: {}vs{}", a.spacing_before, b.spacing_before)); }
+            if a.spacing_after != b.spacing_after { ps_diffs.push(format!("sa: {}vs{}", a.spacing_after, b.spacing_after)); }
+            if a.line_spacing != b.line_spacing { ps_diffs.push(format!("ls: {}vs{}", a.line_spacing, b.line_spacing)); }
+            if !ps_diffs.is_empty() {
+                println!("  [PS {}] {}", i, ps_diffs.join(", "));
+                total_diffs += ps_diffs.len() as u32;
+            }
+        }
+    }
+
+    // doc_info 비교: TabDef
+    {
+        let td_a = &doc_a.doc_info.tab_defs;
+        let td_b = &doc_b.doc_info.tab_defs;
+        if td_a.len() != td_b.len() {
+            println!("\n[차이] TabDef 수: A={} vs B={}", td_a.len(), td_b.len());
+            total_diffs += 1;
+        }
+        let td_count = td_a.len().min(td_b.len());
+        for i in 0..td_count {
+            let a = &td_a[i]; let b = &td_b[i];
+            if a.tabs.len() != b.tabs.len() {
+                println!("  [TD {}] 탭 수: A={} vs B={}", i, a.tabs.len(), b.tabs.len());
+                total_diffs += 1;
+            } else {
+                for (ti, (ta, tb)) in a.tabs.iter().zip(b.tabs.iter()).enumerate() {
+                    if ta.position != tb.position || ta.tab_type != tb.tab_type || ta.fill_type != tb.fill_type {
+                        println!("  [TD {}][{}] pos: {}vs{}, type: {}vs{}, fill: {}vs{}",
+                            i, ti, ta.position, tb.position, ta.tab_type, tb.tab_type, ta.fill_type, tb.fill_type);
+                        total_diffs += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    println!("\n=== 비교 완료: 차이 {} 건 ===", total_diffs);
 }

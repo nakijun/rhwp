@@ -44,3 +44,6 @@ rhwp-studio/e2e/kps-ai*.test.mjs
 # 공개 리포 원본 파일 (prepare-github.sh용)
 CLAUDE.public.md
 README.public.md
+
+# 한컴 도움말 (저작권 보호)
+mydocs/manual/hwp/Help/

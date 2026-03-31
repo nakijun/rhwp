@@ -95,6 +95,9 @@ pub struct ComposedParagraph {
     pub tac_controls: Vec<(usize, i32, usize)>,
     /// 각주/미주 위치: (텍스트 내 char 인덱스, 번호)
     pub footnote_positions: Vec<(usize, u16)>,
+    /// 탭 확장 데이터 (HWP tab_extended / HWPX 인라인 탭)
+    /// ext[0]=width, ext[1]=leader/fill_type, ext[2]=tab_type
+    pub tab_extended: Vec<[u16; 7]>,
 }
 
 /// 구역의 문단 목록을 구성한다.
@@ -155,6 +158,7 @@ pub fn compose_paragraph(para: &Paragraph) -> ComposedParagraph {
         numbering_text: None,
         tac_controls,
         footnote_positions,
+        tab_extended: para.tab_extended.clone(),
     };
 
     // CharOverlap 글자를 조합된 텍스트에 삽입
