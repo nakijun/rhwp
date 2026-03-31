@@ -1478,10 +1478,112 @@ fn parse_line_shape_attr(e: &quick_xml::events::BytesStart) -> ShapeBorderLine {
                 }
             }
             b"width" => bl.width = parse_i32(&attr),
+            b"style" => {
+                // 선 스타일 → attr 비트 플래그 (하위 바이트)
+                let style_val: u8 = match attr_str(&attr).as_str() {
+                    "NONE" => 0,
+                    "SOLID" => 1,
+                    "DASH" => 2,
+                    "DOT" => 3,
+                    "DASH_DOT" => 4,
+                    "DASH_DOT_DOT" => 5,
+                    "LONG_DASH" => 6,
+                    "CIRCLE" => 7,
+                    "DOUBLE_SLIM" => 8,
+                    "SLIM_THICK" => 9,
+                    "THICK_SLIM" => 10,
+                    "SLIM_THICK_SLIM" => 11,
+                    _ => 1,
+                };
+                bl.attr = (bl.attr & !0xFF) | style_val as u32;
+            }
+            b"outlineStyle" => {
+                bl.outline_style = match attr_str(&attr).as_str() {
+                    "NORMAL" => 0,
+                    "OUTER" => 1,
+                    "INNER" => 2,
+                    _ => 0,
+                };
+            }
             _ => {}
         }
     }
     bl
+}
+
+/// shape 내부의 `<hp:fillBrush>` 자식 요소를 파싱하여 Fill을 반환한다.
+fn parse_shape_fill_brush(reader: &mut Reader<&[u8]>) -> Result<Fill, HwpxError> {
+    use crate::model::style::{FillType, SolidFill, ImageFill, GradientFill, ImageFillMode};
+    let mut fill = Fill::default();
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Empty(ref ce)) | Ok(Event::Start(ref ce)) => {
+                let cname = ce.name(); let local = local_name(cname.as_ref());
+                match local {
+                    b"winBrush" => {
+                        fill.fill_type = FillType::Solid;
+                        let mut solid = SolidFill::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"faceColor" => solid.background_color = parse_color(&attr),
+                                b"hatchColor" => solid.pattern_color = parse_color(&attr),
+                                b"alpha" => {
+                                    let val = attr_str(&attr);
+                                    if let Ok(f) = val.parse::<f64>() {
+                                        fill.alpha = (f.clamp(0.0, 1.0) * 255.0) as u8;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        fill.solid = Some(solid);
+                    }
+                    b"gradation" => {
+                        fill.fill_type = FillType::Gradient;
+                        let mut grad = GradientFill::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"type" => grad.gradient_type = parse_i16(&attr),
+                                b"angle" => grad.angle = parse_i16(&attr),
+                                b"centerX" => grad.center_x = parse_i16(&attr),
+                                b"centerY" => grad.center_y = parse_i16(&attr),
+                                _ => {}
+                            }
+                        }
+                        fill.gradient = Some(grad);
+                    }
+                    b"imgBrush" => {
+                        fill.fill_type = FillType::Image;
+                        let mut img = ImageFill::default();
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"mode" => {
+                                    img.fill_mode = match attr_str(&attr).as_str() {
+                                        "TILE" | "TILE_ALL" => ImageFillMode::TileAll,
+                                        "FIT" | "FIT_TO_SIZE" | "STRETCH" | "TOTAL" => ImageFillMode::FitToSize,
+                                        "CENTER" => ImageFillMode::Center,
+                                        _ => ImageFillMode::TileAll,
+                                    };
+                                }
+                                _ => {}
+                            }
+                        }
+                        fill.image = Some(img);
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::End(ref ee)) => {
+                if local_name(ee.name().as_ref()) == b"fillBrush" { break; }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(HwpxError::XmlError(format!("fillBrush: {}", e))),
+            _ => {}
+        }
+        buf.clear();
+    }
+    Ok(fill)
 }
 
 /// `<hp:drawText>` 내부의 `<hp:subList>` → `<hp:p>` 문단을 파싱한다.
@@ -1554,6 +1656,7 @@ fn parse_shape_object(
     let mut common = CommonObjAttr::default();
     let mut shape_attr = ShapeComponentAttr::default();
     let mut border_line = ShapeBorderLine::default();
+    let mut fill = Fill::default();
     let mut text_box: Option<TextBox> = None;
     let mut has_pos = false;
     let mut x_coords = [0i32; 4];
@@ -1619,6 +1722,12 @@ fn parse_shape_object(
                     b"renderingInfo" => {
                         parse_rendering_info(reader, &mut shape_attr)?;
                     }
+                    b"fillBrush" => {
+                        fill = parse_shape_fill_brush(reader)?;
+                    }
+                    b"shadow" => {
+                        // shadow는 무시 (Start 이벤트인 경우 내부 소비)
+                    }
                     _ => {}
                 }
             }
@@ -1635,10 +1744,18 @@ fn parse_shape_object(
         buf.clear();
     }
 
+    // curSz width=0이면 orgSz 또는 sz에서 폴백
+    if shape_attr.current_width == 0 && shape_attr.original_width > 0 {
+        shape_attr.current_width = shape_attr.original_width;
+        if common.width == 0 {
+            common.width = shape_attr.original_width;
+        }
+    }
+
     let drawing = DrawingObjAttr {
         shape_attr,
         border_line,
-        fill: Fill::default(),
+        fill,
         text_box,
         ..Default::default()
     };
