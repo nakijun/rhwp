@@ -1669,9 +1669,11 @@ impl HwpDocument {
         let height = json_u32(json, "height").unwrap_or(8504);
         let horz_offset = json_u32(json, "horzOffset").unwrap_or(0);
         let vert_offset = json_u32(json, "vertOffset").unwrap_or(0);
-        let treat_as_char = json_bool(json, "treatAsChar").unwrap_or(false);
-        let text_wrap = json_str(json, "textWrap").unwrap_or_else(|| "Square".to_string());
         let shape_type = json_str(json, "shapeType").unwrap_or_else(|| "rectangle".to_string());
+        // 글상자는 기본적으로 treat_as_char=true (한컴 기본값)
+        let default_tac = shape_type == "textbox";
+        let treat_as_char = json_bool(json, "treatAsChar").unwrap_or(default_tac);
+        let text_wrap = json_str(json, "textWrap").unwrap_or_else(|| "Square".to_string());
         let line_flip_x = json_bool(json, "lineFlipX").unwrap_or(false);
         let line_flip_y = json_bool(json, "lineFlipY").unwrap_or(false);
         // 다각형 꼭짓점: "polygonPoints":[{"x":N,"y":N},...]
