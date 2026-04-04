@@ -284,6 +284,8 @@ Most AI coding demos show simple tasks. This project demonstrates AI pair progra
 
 The `mydocs/` directory is not documentation about the code — it's documentation about **how to build software with AI**. It's an open-source methodology.
 
+**[Hyper-Waterfall Methodology](mydocs/eng/manual/hyper_waterfall.md)** — Waterfall discipline at the macro level + Agile speed at the micro level, made possible by AI.
+
 ### Vibe Coding vs. Directed AI Development
 
 | | Vibe Coding | This Project |
