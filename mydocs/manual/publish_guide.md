@@ -10,8 +10,9 @@ rhwp 프로젝트의 배포 대상과 절차를 정리한다.
 |------|---------|----------|--------|
 | GitHub Pages (데모) | — | CI/CD 자동 | main push 또는 태그 |
 | npm WASM 코어 | @rhwp/core | CI/CD 자동 | GitHub Release 생성 |
-| VSCode 익스텐션 | rhwp-vscode | 수동 스크립트 | `publish.sh` 실행 |
-| npm 에디터 | @rhwp/editor | 수동 | `npm publish` 실행 |
+| npm 에디터 | @rhwp/editor | CI/CD 자동 | GitHub Release 생성 |
+| VSCode Marketplace | rhwp-vscode | CI/CD 자동 | GitHub Release 생성 |
+| Open VSX | rhwp-vscode | CI/CD 자동 | GitHub Release 생성 |
 
 ---
 
@@ -23,7 +24,7 @@ rhwp 프로젝트의 배포 대상과 절차를 정리한다.
 |------|--------|------|
 | `.github/workflows/ci.yml` | push/PR (main, devel) | cargo build + test + clippy 검증 |
 | `.github/workflows/deploy-pages.yml` | main push, 태그 | WASM 빌드 → rhwp-studio 빌드 → GitHub Pages 배포 |
-| `.github/workflows/npm-publish.yml` | **GitHub Release 생성** | WASM 빌드 → @rhwp/core npm 배포 |
+| `.github/workflows/npm-publish.yml` | **GitHub Release 생성** | WASM 빌드 → @rhwp/core + @rhwp/editor + VSCode 익스텐션 일괄 배포 |
 
 ### CI/CD 자동 배포 흐름
 
@@ -34,13 +35,16 @@ devel push → CI 자동 실행 (build + test + clippy)
   ↓
 main merge + push → GitHub Pages 자동 배포
   ↓
-GitHub Release 생성 (태그) → npm @rhwp/core 자동 배포
-  ↓
-수동: VSCode 익스텐션 배포 (publish.sh)
-수동: npm @rhwp/editor 배포 (npm publish)
+GitHub Release 생성 (태그)
+  ↓ npm-publish.yml 자동 실행
+  ├─ WASM 빌드
+  ├─ npm @rhwp/core 배포
+  ├─ npm @rhwp/editor 배포
+  ├─ VS Code Marketplace 배포
+  └─ Open VSX 배포
 ```
 
-> **중요**: npm @rhwp/core는 수동으로 `npm publish`하지 않는다. GitHub Release를 생성하면 자동 배포된다.
+> **중요**: GitHub Release를 생성하면 5곳 모두 자동 배포된다. 수동 `npm publish`나 `publish.sh`를 실행하지 않는다.
 
 ### GitHub Secrets 설정
 
@@ -48,7 +52,9 @@ GitHub Actions에서 사용하는 시크릿 (Settings → Secrets and variables 
 
 | Secret 이름 | 용도 |
 |------------|------|
-| `NPM_TOKEN` | npm 배포 인증 (@rhwp/core 자동 배포) |
+| `NPM_TOKEN` | npm 배포 인증 (@rhwp/core, @rhwp/editor) |
+| `VSCE_PAT` | VS Code Marketplace 배포 인증 |
+| `OVSX_PAT` | Open VSX 배포 인증 |
 
 ---
 
@@ -181,39 +187,19 @@ gh release create v0.7.0 --title "v0.7.0 — 제목" --notes "릴리즈 노트"
 >
 > 수동으로 `cd pkg && npm publish`를 실행하지 않는다.
 
-### 6단계: VSCode 익스텐션 수동 배포
+### 6단계: 배포 확인 (자동 완료 대기)
 
-```bash
-cd rhwp-vscode
-bash publish.sh
-```
+GitHub Release 생성 후 Actions 탭에서 `Publish All Packages` 워크플로우가 실행되는 것을 확인한다.
 
-`publish.sh` 수행 작업:
-1. `assets/logo/logo-128.png` → `media/icon.png` 복사
-2. `pkg/rhwp_bg.wasm`, `pkg/rhwp.js` → `media/` 복사
-3. webpack 빌드
-4. VS Code Marketplace 배포 (`npx vsce publish`)
-5. Open VSX 배포 (`npx ovsx publish`)
+4개 job이 순차 실행된다:
+1. **Build WASM** — WASM 빌드 + 아티팩트 업로드
+2. **Publish @rhwp/core** — npm 배포
+3. **Publish @rhwp/editor** — npm 배포
+4. **Publish VSCode Extension** — Marketplace + Open VSX 배포
 
-사전 조건 — `.env` 파일에 토큰 설정:
-```
-VSCE_PAT=<Azure DevOps Personal Access Token>
-OVSX_PAT=<Open VSX Access Token>
-```
+> 전체 소요 시간: 약 5~10분
 
-### 7단계: npm @rhwp/editor 수동 배포
-
-```bash
-cd npm/editor
-npm publish --access public
-```
-
-사전 조건 — `~/.npmrc`에 npm 토큰 설정:
-```bash
-echo "//registry.npmjs.org/:_authToken=<npm_token>" > ~/.npmrc
-```
-
-### 8단계: 배포 확인
+### 7단계: 배포 확인
 
 | 대상 | 확인 URL |
 |------|---------|
@@ -261,10 +247,11 @@ echo "//registry.npmjs.org/:_authToken=<npm_token>" > ~/.npmrc
 
 - [ ] devel push → CI 통과 확인
 - [ ] main merge + push → GitHub Pages 배포 확인
-- [ ] GitHub Release 생성 → npm @rhwp/core 자동 배포 확인
-- [ ] `publish.sh` → VSCode 익스텐션 배포 확인
-- [ ] `npm publish` → @rhwp/editor 배포 확인
-- [ ] 5곳 URL 모두 최신 버전 확인
+- [ ] GitHub Release 생성 → Actions 탭에서 `Publish All Packages` 실행 확인
+- [ ] @rhwp/core npm 배포 확인
+- [ ] @rhwp/editor npm 배포 확인
+- [ ] VS Code Marketplace 배포 확인
+- [ ] Open VSX 배포 확인
 
 ---
 

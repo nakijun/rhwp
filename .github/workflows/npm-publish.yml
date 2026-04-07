@@ -1,4 +1,4 @@
-name: Publish npm Package
+name: Publish All Packages
 
 on:
   release:
@@ -10,8 +10,8 @@ permissions:
   id-token: write
 
 jobs:
-  publish:
-    name: Build & Publish
+  build-wasm:
+    name: Build WASM
     runs-on: ubuntu-latest
 
     steps:
@@ -39,6 +39,26 @@ jobs:
       - name: Build WASM
         run: wasm-pack build --target web --release
 
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-pkg
+          path: pkg/
+
+  publish-npm-core:
+    name: Publish @rhwp/core
+    needs: build-wasm
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: pkg/
+
       - name: Prepare npm package
         run: bash scripts/prepare-npm.sh
 
@@ -48,8 +68,71 @@ jobs:
           node-version: 20
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Publish to npm (Trusted Publishing)
+      - name: Publish to npm
         working-directory: pkg
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-npm-editor:
+    name: Publish @rhwp/editor
+    needs: build-wasm
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        working-directory: npm/editor
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-vscode:
+    name: Publish VSCode Extension
+    needs: build-wasm
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download WASM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-pkg
+          path: pkg/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        working-directory: rhwp-vscode
+        run: npm install
+
+      - name: Copy logo
+        run: cp assets/logo/logo-128.png rhwp-vscode/media/icon.png
+
+      - name: Copy WASM files
+        run: |
+          cp pkg/rhwp_bg.wasm rhwp-vscode/media/
+          cp pkg/rhwp.js rhwp-vscode/media/
+
+      - name: Build extension
+        working-directory: rhwp-vscode
+        run: npm run compile
+
+      - name: Publish to VS Code Marketplace
+        working-directory: rhwp-vscode
+        run: npx vsce publish -p ${{ secrets.VSCE_PAT }}
+
+      - name: Publish to Open VSX
+        working-directory: rhwp-vscode
+        run: npx ovsx publish -p ${{ secrets.OVSX_PAT }}
