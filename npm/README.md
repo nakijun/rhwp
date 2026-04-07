@@ -158,6 +158,57 @@ HWP 문서의 텍스트 배치(줄바꿈 위치, 양쪽 정렬 간격)를 정확
 WASM 내부에는 브라우저 폰트에 접근할 수 없으므로,
 JavaScript의 `Canvas.measureText()`를 콜백으로 호출합니다.
 
+## 폰트 설정 가이드
+
+### SVG 렌더링과 폰트
+
+`renderPageSvg()`가 생성하는 SVG는 CSS `font-family` 속성으로 폰트를 지정합니다.
+HWP 문서에서 사용된 폰트(한컴바탕, HY명조 등)가 사용자 환경에 없으면 **글자가 대체 폰트로 표시**되어 줄 바꿈 위치나 글자 간격이 원본과 달라질 수 있습니다.
+
+### 권장: 오픈소스 폴백 폰트 로드
+
+rhwp는 한컴 전용 폰트를 오픈소스 폰트로 자동 폴백합니다. 아래 폰트를 웹페이지에 로드하면 대부분의 HWP 문서를 원본에 가깝게 렌더링할 수 있습니다.
+
+```html
+<!-- Google Fonts CDN -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&family=Noto+Serif+KR:wght@400;700&family=Nanum+Gothic&family=Nanum+Myeongjo&display=swap">
+```
+
+또는 셀프 호스팅:
+
+```css
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-Regular.woff2') format('woff2');
+  font-weight: 400;
+}
+@font-face {
+  font-family: 'Pretendard';
+  src: url('/fonts/Pretendard-Bold.woff2') format('woff2');
+  font-weight: 700;
+}
+```
+
+### 폰트 폴백 매핑
+
+rhwp가 SVG에 적용하는 자동 폴백 체인:
+
+| HWP 원본 폰트 | 폴백 1 | 폴백 2 | 폴백 3 |
+|--------------|--------|--------|--------|
+| 한컴바탕, HY명조 | Noto Serif KR | 나눔명조 | serif |
+| 한컴돋움, HY고딕 | Noto Sans KR | 나눔고딕 | sans-serif |
+| 함초롬바탕 | Noto Serif KR | 나눔명조 | serif |
+| 함초롬돋움 | Pretendard | Noto Sans KR | sans-serif |
+| 맑은 고딕 | Pretendard | Noto Sans KR | sans-serif |
+| Arial, Calibri | Pretendard | sans-serif | — |
+| Times New Roman | Noto Serif KR | serif | — |
+| 바탕, 궁서 | Noto Serif KR | serif | — |
+| 돋움, 굴림 | Noto Sans KR | sans-serif | — |
+
+### 폰트 없이도 동작합니다
+
+폴백 폰트를 로드하지 않아도 SVG는 정상적으로 렌더링됩니다. 브라우저의 기본 serif/sans-serif 폰트가 사용되며, 글자 간격이 원본과 다소 다를 수 있습니다.
+
 ## 지원 기능
 
 - **HWP 5.0** (바이너리) + **HWPX** (XML) 파싱
@@ -174,9 +225,34 @@ JavaScript의 `Canvas.measureText()`를 콜백으로 호출합니다.
 - **[@rhwp/editor](https://www.npmjs.com/package/@rhwp/editor)** — 에디터 UI 임베드
 - **[VS Code 확장](https://marketplace.visualstudio.com/items?itemName=edwardkim.rhwp-vscode)**
 
+## Third-Party Licenses
+
+이 패키지는 다음 오픈소스 Rust 크레이트를 WASM으로 컴파일하여 포함합니다.
+
+| 크레이트 | 라이선스 |
+|---------|---------|
+| wasm-bindgen / web-sys / js-sys | MIT OR Apache-2.0 |
+| quick-xml | MIT |
+| cfb | MIT |
+| flate2 | MIT OR Apache-2.0 |
+| encoding_rs | (Apache-2.0 OR MIT) AND BSD-3-Clause |
+| usvg / svg2pdf | Apache-2.0 OR MIT |
+| pdf-writer | MIT OR Apache-2.0 |
+| unicode-segmentation / unicode-width | MIT OR Apache-2.0 |
+| image | MIT OR Apache-2.0 |
+
+전체 목록: [THIRD_PARTY_LICENSES.md](https://github.com/edwardkim/rhwp/blob/main/THIRD_PARTY_LICENSES.md)
+
+> 모든 의존성은 MIT 라이선스와 호환됩니다.
+
 ## Notice
 
 본 제품은 한글과컴퓨터의 한글 문서 파일(.hwp) 공개 문서를 참고하여 개발하였습니다.
+
+## Trademark
+
+"한글", "한컴", "HWP", "HWPX"는 주식회사 한글과컴퓨터의 등록 상표입니다.
+본 패키지는 한글과컴퓨터와 제휴, 후원, 승인 관계가 없는 독립적인 오픈소스 프로젝트입니다.
 
 ## License
 
