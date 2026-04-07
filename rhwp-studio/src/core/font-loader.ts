@@ -110,6 +110,40 @@ let fontFaceRegistered = false;
 const loadedFiles = new Set<string>();
 
 /**
+ * OS에 설치된 폰트인지 감지한다 (document.fonts.check 기반).
+ * @font-face 등록 전에 호출해야 정확하다.
+ */
+const OS_FONT_CANDIDATES = [
+  // Windows
+  '맑은 고딕', 'Malgun Gothic', '바탕', 'Batang', '돋움', 'Dotum',
+  '굴림', 'Gulim', '굴림체', 'GulimChe', '바탕체', 'BatangChe', '궁서', 'Gungsuh',
+  // macOS / iOS
+  'Apple SD Gothic Neo', 'AppleMyungjo', 'AppleGothic',
+  // Android
+  'Noto Sans KR', 'Noto Serif KR',
+];
+const detectedOSFonts = new Set<string>();
+
+/** OS 폰트 감지 실행 (@font-face 등록 전에 호출) */
+function detectOSFonts(): void {
+  for (const name of OS_FONT_CANDIDATES) {
+    try {
+      if (document.fonts.check(`16px "${name}"`)) {
+        detectedOSFonts.add(name);
+      }
+    } catch { /* 무시 */ }
+  }
+  if (detectedOSFonts.size > 0) {
+    console.log(`[FontLoader] OS 폰트 감지: ${Array.from(detectedOSFonts).join(', ')}`);
+  }
+}
+
+/** 감지된 OS 폰트 목록 (외부 참조용) */
+export function getDetectedOSFonts(): ReadonlySet<string> {
+  return detectedOSFonts;
+}
+
+/**
  * 웹폰트를 선별 로드한다.
  *   1단계(동기): CSS @font-face 전체 등록 (최초 1회, 네트워크 미발생)
  *   2단계: 대상 폰트 로드 (이미 로드된 파일은 건너뜀)
@@ -121,6 +155,11 @@ export async function loadWebFonts(
   docFonts?: string[],
   onProgress?: (loaded: number, total: number) => void,
 ): Promise<void> {
+  // 0) OS 폰트 감지 (@font-face 등록 전에 실행해야 정확)
+  if (!fontFaceRegistered) {
+    detectOSFonts();
+  }
+
   // 1) CSS @font-face 규칙 전체 등록 (네트워크 미발생, 최초 1회만)
   if (!fontFaceRegistered) {
     const style = document.createElement('style');
@@ -133,8 +172,14 @@ export async function loadWebFonts(
   }
 
   // 2) 로드 대상 결정: docFonts에 포함된 폰트 + CRITICAL만 로드
+  //    OS에 설치된 폰트는 웹폰트 로딩 건너뜀
   const targetSet = new Set([...(docFonts ?? []), ...CRITICAL_FONTS]);
-  const toLoad = FONT_LIST.filter(f => targetSet.has(f.name));
+  const toLoad = FONT_LIST.filter(f => {
+    if (!targetSet.has(f.name)) return false;
+    // OS에 동일 이름 폰트가 있으면 웹폰트 로딩 불필요
+    if (detectedOSFonts.has(f.name)) return false;
+    return true;
+  });
 
   // woff2 파일 기준으로 중복 제거 + 이미 로드된 파일 건너뜀
   const seenFiles = new Set<string>();
