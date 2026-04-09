@@ -142,13 +142,40 @@
 
     card.innerHTML = html;
 
-    // 위치 계산
+    // 위치 계산 — 뷰포트 하단을 넘으면 링크 위쪽에 표시
     const rect = anchor.getBoundingClientRect();
-    card.style.left = `${rect.left + window.scrollX}px`;
-    card.style.top = `${rect.bottom + window.scrollY + 4}px`;
-
     document.body.appendChild(card);
     activeCard = card;
+
+    const cardHeight = card.offsetHeight;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    let left = rect.left + window.scrollX;
+    let top;
+
+    if (spaceBelow >= cardHeight + 8) {
+      // 아래에 공간 충분 → 링크 아래에 표시
+      top = rect.bottom + window.scrollY + 4;
+    } else if (spaceAbove >= cardHeight + 8) {
+      // 위에 공간 충분 → 링크 위에 표시
+      top = rect.top + window.scrollY - cardHeight - 4;
+    } else {
+      // 양쪽 다 부족 → 뷰포트 하단에 맞춤
+      top = window.scrollY + window.innerHeight - cardHeight - 8;
+    }
+
+    // 좌우 넘침 방지
+    const cardWidth = card.offsetWidth;
+    if (left + cardWidth > window.scrollX + window.innerWidth - 8) {
+      left = window.scrollX + window.innerWidth - cardWidth - 8;
+    }
+    if (left < window.scrollX + 8) {
+      left = window.scrollX + 8;
+    }
+
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
 
     // 카드에 마우스 올리면 유지
     card.addEventListener('mouseenter', () => clearTimeout(hoverTimeout));
