@@ -24,6 +24,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `manual/` - 매뉴얼, 가이드 문서
 - `troubleshootings/` - 트러블슈팅 관련 문서
 
+### 필수 참조 문서
+
+- `mydocs/manual/browser_extension_dev_guide.md` — 브라우저 확장 개발 가이드 (Safari/Chrome/Edge 보안, UX, 빌드 규칙)
+- `mydocs/tech/font_fallback_strategy.md` — 폰트 폴백 전략 (오픈소스 대체, 라이선스)
+- `mydocs/report/browser_extension_security_audit.md` — 보안 감사 보고서
+
 문서 파일명 규칙 (`plans/`, `working/`):
 - 수행 계획서: `task_{milestone}_{이슈번호}.md` (예: task_m100_71.md)
 - 구현 계획서: `task_{milestone}_{이슈번호}_impl.md` (예: task_m100_71_impl.md)
