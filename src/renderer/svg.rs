@@ -53,6 +53,8 @@ pub struct SvgRenderer {
     overlay_table_bounds: Vec<OverlayTableInfo>,
     /// 디버그 오버레이용: 표/머리말/꼬리말 내부 깊이 (셀 내·헤더 문단 제외)
     overlay_skip_depth: u32,
+    /// 디버그 오버레이용: 현재 페이지의 메인 섹션 인덱스 (-1이면 미설정)
+    overlay_page_section: i32,
     /// 생성된 화살표 마커 ID 집합 (중복 방지)
     arrow_marker_ids: std::collections::HashSet<String>,
     /// 폰트 임베딩 모드
@@ -101,6 +103,7 @@ impl SvgRenderer {
             overlay_para_bounds: std::collections::HashMap::new(),
             overlay_table_bounds: Vec::new(),
             overlay_skip_depth: 0,
+            overlay_page_section: -1,
             arrow_marker_ids: std::collections::HashSet::new(),
             font_embed_mode: FontEmbedMode::None,
             font_paths: Vec::new(),
@@ -327,48 +330,81 @@ impl SvgRenderer {
             match &node.node_type {
                 RenderNodeType::TextLine(tl) => {
                     if self.overlay_skip_depth == 0 {
-                        if let Some(pi) = tl.para_index {
-                            let si = tl.section_index.unwrap_or(0);
-                            // (section, para) 복합키로 섹션 간 구분
-                            let key = si * 100000 + pi;
-                            let entry = self.overlay_para_bounds.entry(key).or_insert(OverlayBounds {
-                                section_index: si,
-                                x: node.bbox.x, y: node.bbox.y,
-                                width: node.bbox.width, height: node.bbox.height,
-                            });
-                            // 기존 bounds 확장 (여러 줄이 하나의 문단)
-                            let min_x = entry.x.min(node.bbox.x);
-                            let min_y = entry.y.min(node.bbox.y);
-                            let max_x = (entry.x + entry.width).max(node.bbox.x + node.bbox.width);
-                            let max_y = (entry.y + entry.height).max(node.bbox.y + node.bbox.height);
-                            entry.x = min_x;
-                            entry.y = min_y;
-                            entry.width = max_x - min_x;
-                            entry.height = max_y - min_y;
+                        // section_index가 없는 TextLine은 Shape 내부 등 비본문 요소 — 제외
+                        if let (Some(pi), Some(si)) = (tl.para_index, tl.section_index) {
+                            // 페이지 메인 섹션 자동 감지 (처음 등장하는 섹션이 메인)
+                            if self.overlay_page_section == -1 {
+                                self.overlay_page_section = si as i32;
+                            }
+                            // 페이지 메인 섹션이 아닌 섹션 문단은 오버레이에서 제외
+                            // (구역 정의 섹션, 다른 섹션 나누기 문단 등)
+                            if si as i32 != self.overlay_page_section {
+                                // skip
+                            } else {
+                                // (section, para) 복합키로 섹션 간 구분
+                                let key = si * 100000 + pi;
+                                let entry = self.overlay_para_bounds.entry(key).or_insert(OverlayBounds {
+                                    section_index: si,
+                                    x: node.bbox.x, y: node.bbox.y,
+                                    width: node.bbox.width, height: node.bbox.height,
+                                });
+                                // 기존 bounds 확장 (여러 줄이 하나의 문단)
+                                let min_x = entry.x.min(node.bbox.x);
+                                let min_y = entry.y.min(node.bbox.y);
+                                let max_x = (entry.x + entry.width).max(node.bbox.x + node.bbox.width);
+                                let max_y = (entry.y + entry.height).max(node.bbox.y + node.bbox.height);
+                                entry.x = min_x;
+                                entry.y = min_y;
+                                entry.width = max_x - min_x;
+                                entry.height = max_y - min_y;
+                            }
                         }
                     }
                 }
                 RenderNodeType::Table(tbl) => {
                     if let (Some(pi), Some(ci)) = (tbl.para_index, tbl.control_index) {
                         if self.overlay_skip_depth == 0 {
-                            self.overlay_table_bounds.push(OverlayTableInfo {
-                                section_index: tbl.section_index.unwrap_or(0),
-                                para_index: pi,
-                                control_index: ci,
-                                x: node.bbox.x,
-                                y: node.bbox.y,
-                                width: node.bbox.width,
-                                height: node.bbox.height,
-                                row_count: tbl.row_count,
-                                col_count: tbl.col_count,
-                            });
+                            let tbl_si = tbl.section_index.unwrap_or(0);
+                            // 페이지 메인 섹션 자동 감지
+                            if self.overlay_page_section == -1 {
+                                self.overlay_page_section = tbl_si as i32;
+                            }
+                            if tbl_si as i32 == self.overlay_page_section {
+                                self.overlay_table_bounds.push(OverlayTableInfo {
+                                    section_index: tbl_si,
+                                    para_index: pi,
+                                    control_index: ci,
+                                    x: node.bbox.x,
+                                    y: node.bbox.y,
+                                    width: node.bbox.width,
+                                    height: node.bbox.height,
+                                    row_count: tbl.row_count,
+                                    col_count: tbl.col_count,
+                                });
+                                // 표를 포함하는 문단 bounds도 확장 (텍스트 없는 문단 처리)
+                                let key = tbl_si * 100000 + pi;
+                                let entry = self.overlay_para_bounds.entry(key).or_insert(OverlayBounds {
+                                    section_index: tbl_si,
+                                    x: node.bbox.x, y: node.bbox.y,
+                                    width: node.bbox.width, height: node.bbox.height,
+                                });
+                                let min_x = entry.x.min(node.bbox.x);
+                                let min_y = entry.y.min(node.bbox.y);
+                                let max_x = (entry.x + entry.width).max(node.bbox.x + node.bbox.width);
+                                let max_y = (entry.y + entry.height).max(node.bbox.y + node.bbox.height);
+                                entry.x = min_x;
+                                entry.y = min_y;
+                                entry.width = max_x - min_x;
+                                entry.height = max_y - min_y;
+                            }
                         }
                     }
                     self.overlay_skip_depth += 1;
                 }
-                // 머리말/꼬리말/바탕쪽/각주: body 외 영역 제외
+                // 머리말/꼬리말/바탕쪽/각주/텍스트박스/그룹: body 외 영역 제외
                 RenderNodeType::Header | RenderNodeType::Footer
-                | RenderNodeType::MasterPage | RenderNodeType::FootnoteArea => {
+                | RenderNodeType::MasterPage | RenderNodeType::FootnoteArea
+                | RenderNodeType::TextBox | RenderNodeType::Group(_) => {
                     self.overlay_skip_depth += 1;
                 }
                 _ => {}
@@ -384,7 +420,8 @@ impl SvgRenderer {
             match &node.node_type {
                 RenderNodeType::Table(_)
                 | RenderNodeType::Header | RenderNodeType::Footer
-                | RenderNodeType::MasterPage | RenderNodeType::FootnoteArea => {
+                | RenderNodeType::MasterPage | RenderNodeType::FootnoteArea
+                | RenderNodeType::TextBox | RenderNodeType::Group(_) => {
                     self.overlay_skip_depth = self.overlay_skip_depth.saturating_sub(1);
                 }
                 _ => {}
@@ -1567,6 +1604,10 @@ impl Renderer for SvgRenderer {
         self.defs.clear();
         self.gradient_counter = 0;
         self.arrow_marker_ids.clear();
+        self.overlay_para_bounds.clear();
+        self.overlay_table_bounds.clear();
+        self.overlay_skip_depth = 0;
+        self.overlay_page_section = -1;
         self.output.push_str(&format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\" viewBox=\"0 0 {} {}\">\n",
             width, height, width, height,

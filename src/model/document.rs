@@ -60,6 +60,8 @@ pub struct PreviewImage {
 /// 썸네일 이미지 포맷
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PreviewImageFormat {
+    /// PNG 이미지
+    Png,
     /// BMP 이미지
     Bmp,
     /// GIF 이미지

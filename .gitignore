@@ -69,3 +69,11 @@ mydocs/manual/hwp/Help/
 # rhwp-vscode 빌드 산출물
 rhwp-vscode/media/rhwp.js
 rhwp-vscode/media/rhwp_bg.wasm
+
+# rhwp-chrome 빌드 산출물
+rhwp-chrome/dist/
+
+# rhwp-safari 빌드 산출물
+rhwp-safari/dist/
+rhwp-safari/HWP Viewer/
+rhwp-safari/.DS_Store

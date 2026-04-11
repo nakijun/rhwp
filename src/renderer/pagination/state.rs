@@ -1,7 +1,13 @@
 //! PaginationState: paginate_with_measured의 가변 상태를 캡슐화
 
+use std::collections::HashMap;
 use crate::renderer::page_layout::PageLayoutInfo;
 use super::{PageContent, ColumnContent, PageItem, WrapAroundPara};
+
+/// 페이지당 방어 로직 최대 실행 횟수.
+/// 정상 문서에서는 절대 도달하지 않는 값. 이 값을 초과하면 무한 루프로 판단하고 강제 배치.
+/// TODO: current_height 누적이 정확해지면 방어 로직과 함께 제거 가능.
+const DEFENSE_MAX_PER_PAGE: u32 = 100;
 
 /// paginate_with_measured의 12+ 가변 상태 변수를 구조체로 통합
 pub(super) struct PaginationState {
@@ -26,6 +32,15 @@ pub(super) struct PaginationState {
     pub page_vpos_base: Option<i32>,
     /// 현재 페이지에 비-TAC 블록 표가 존재하는지 (vpos drift 보정용)
     pub page_has_block_table: bool,
+    // --- 방어 로직 (TODO: current_height 누적이 정확해지면 제거 가능) ---
+    /// 페이지별 방어 로직 실행 횟수 (레이어 1·2 공통).
+    /// key: page_index (= pages.len() at time of defense), value: 실행 횟수
+    pub defense_counts: HashMap<usize, u32>,
+    /// 페이지 전환 시 overflow로 판정된 마지막 항목을 다음 페이지/단으로 이월
+    pub overflow_carry: Option<PageItem>,
+    /// 레이어 1이 advance_column_or_new_page를 호출 중임을 표시.
+    /// 이 플래그가 true이면 레이어 2(check_last_item_overflow)를 스킵하여 이중 이동 방지.
+    pub layer1_advancing: bool,
 }
 
 impl PaginationState {
@@ -54,6 +69,9 @@ impl PaginationState {
             current_column_wrap_around_paras: Vec::new(),
             page_vpos_base: None,
             page_has_block_table: false,
+            defense_counts: HashMap::new(),
+            overflow_carry: None,
+            layer1_advancing: false,
         }
     }
 
@@ -100,6 +118,44 @@ impl PaginationState {
             self.current_height = 0.0;
         } else {
             self.push_new_page();
+        }
+    }
+
+    /// 페이지 전환 시 마지막 문단 항목이 overflow인지 점검.
+    /// overflow이면 해당 항목을 overflow_carry로 이월하여 다음 페이지/단에 재삽입.
+    /// FullParagraph / PartialParagraph만 대상 (표·글상자 제외).
+    fn check_last_item_overflow(&mut self) {
+        // carry가 이미 있으면 중복 방지
+        if self.overflow_carry.is_some() {
+            return;
+        }
+        let is_para_item = self.current_items.last().map_or(false, |item| {
+            matches!(item, PageItem::FullParagraph { .. } | PageItem::PartialParagraph { .. })
+        });
+        if !is_para_item {
+            return;
+        }
+        let available = self.available_height();
+        if self.current_height <= available + 0.5 {
+            return;
+        }
+        // overflow 감지: 방어 횟수 기록
+        let page_idx = self.pages.len();
+        let count = self.defense_counts.entry(page_idx).or_insert(0);
+        *count += 1;
+        if *count > DEFENSE_MAX_PER_PAGE {
+            // 상한 초과: 무한 루프 최종 차단, carry 발동 안 함
+            return;
+        }
+        self.overflow_carry = self.current_items.pop();
+    }
+
+    /// overflow_carry 항목을 현재 페이지/단에 재삽입하고 current_height를 보정.
+    /// page_vpos_base 설정은 호출자(engine.rs)가 para.line_segs 접근 후 수행.
+    pub fn reinsert_carry_with_height(&mut self, carry_height: f64) {
+        if let Some(carry) = self.overflow_carry.take() {
+            self.current_items.push(carry);
+            self.current_height += carry_height;
         }
     }
 

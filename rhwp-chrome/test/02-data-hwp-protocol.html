@@ -41,6 +41,65 @@
         </td>
         <td>format, title, pages, size, author, date, description</td>
       </tr>
+      <tr>
+        <td>
+          <a href="/samples/table-vpos-01.hwp"
+             data-hwp="true"
+             data-hwp-format="hwpx"
+             data-hwp-title="2026년 1분기 실적 보고서"
+             data-hwp-pages="45"
+             data-hwp-size="1048576"
+             data-hwp-author="기획재정부"
+             data-hwp-date="2026-04-01"
+             data-hwp-description="2026년도 1분기 예산 집행 실적 보고서">
+            (행안부)1분기 실적 보고서.hwp
+          </a>
+        </td>
+        <td>format, title, pages, size, author, date, description</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>썸네일 테스트</h2>
+    <p class="desc">호버 시 썸네일이 자동 추출되거나, 사전 지정된 썸네일이 표시되는지 확인합니다.</p>
+    <table>
+      <tr><th>링크</th><th>기대 결과</th></tr>
+      <tr>
+        <td>
+          <a href="/samples/biz_plan.hwp"
+             data-hwp="true"
+             data-hwp-title="사업계획서 (자동 썸네일)">
+            사업계획서.hwp — 자동 추출
+          </a>
+        </td>
+        <td>호버 시 PrvImage(PNG 724×1024) 자동 추출 표시</td>
+      </tr>
+      <tr>
+        <td>
+          <a href="/samples/shift-return.hwp"
+             data-hwp="true"
+             data-hwp-title="Shift+Enter 테스트 (GIF 썸네일)">
+            shift-return.hwp — 자동 추출 (GIF)
+          </a>
+        </td>
+        <td>호버 시 PrvImage(GIF 177×250) 자동 추출 표시</td>
+      </tr>
+      <tr>
+        <td>
+          <a href="/samples/biz_plan.hwp"
+             data-hwp="true"
+             data-hwp-title="사업계획서 (동일 URL 재호버)"
+             data-hwp-pages="6">
+            사업계획서.hwp — 캐시 히트 확인
+          </a>
+        </td>
+        <td>호버 시 캐시에서 즉시 표시 (fetch 없음)</td>
+      </tr>
+      <tr>
+        <td><a href="/samples/biz_plan.hwp" data-hwp="true">사업계획서.hwp — 제목 없이 자동 추출</a></td>
+        <td>파일명으로 카드 표시 + 썸네일 자동 추출</td>
+      </tr>
     </table>
   </div>
 

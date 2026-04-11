@@ -21,6 +21,7 @@ fn main() {
         Some("gen-table") => gen_table(&args[2..]),
         Some("test-field") => test_field_roundtrip(&args[2..]),
         Some("ir-diff") => ir_diff(&args[2..]),
+        Some("thumbnail") => extract_thumbnail(&args[2..]),
         _ => {
             println!("rhwp v{}", rhwp::version());
             println!("사용법: rhwp <명령> [옵션]");
@@ -65,6 +66,13 @@ fn print_help() {
     println!();
     println!("  ir-diff <파일A.hwpx> <파일B.hwp> [-s <구역>] [-p <문단>]");
     println!("      두 파일의 IR(중간표현) 비교 (HWPX↔HWP 불일치 검출)");
+    println!();
+    println!("  thumbnail <파일.hwp> [옵션]");
+    println!("      HWP 파일에서 썸네일(PrvImage) 추출");
+    println!();
+    println!("      -o, --output <파일>       출력 파일 경로 (기본: 입력명_thumb.png)");
+    println!("      --base64                  base64 문자열을 stdout에 출력");
+    println!("      --data-uri                data:image/... URI 형식으로 stdout에 출력");
     println!();
     println!("옵션:");
     println!("  -h, --help      도움말 표시");
@@ -2023,4 +2031,99 @@ fn ir_diff(args: &[String]) {
     }
 
     println!("\n=== 비교 완료: 차이 {} 건 ===", total_diffs);
+}
+
+fn extract_thumbnail(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("사용법: rhwp thumbnail <파일.hwp> [옵션]");
+        eprintln!("  -o, --output <파일>   출력 파일 경로");
+        eprintln!("  --base64              base64 문자열 출력");
+        eprintln!("  --data-uri            data:image/... URI 출력");
+        std::process::exit(1);
+    }
+
+    let input_path = &args[0];
+    let mut output_path: Option<String> = None;
+    let mut mode = "file"; // "file", "base64", "data-uri"
+
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => {
+                i += 1;
+                if i < args.len() {
+                    output_path = Some(args[i].clone());
+                }
+            }
+            "--base64" => mode = "base64",
+            "--data-uri" => mode = "data-uri",
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let data = match fs::read(input_path) {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("오류: 파일을 읽을 수 없습니다: {} ({})", input_path, e);
+            std::process::exit(1);
+        }
+    };
+
+    let result = match rhwp::parser::extract_thumbnail_only(&data) {
+        Some(r) => r,
+        None => {
+            eprintln!("오류: PrvImage 썸네일이 없습니다: {}", input_path);
+            std::process::exit(1);
+        }
+    };
+
+    let mime = match result.format.as_str() {
+        "png" => "image/png",
+        "bmp" => "image/bmp",
+        "gif" => "image/gif",
+        _ => "application/octet-stream",
+    };
+
+    match mode {
+        "base64" => {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&result.data);
+            println!("{}", b64);
+        }
+        "data-uri" => {
+            use base64::Engine;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&result.data);
+            println!("data:{};base64,{}", mime, b64);
+        }
+        _ => {
+            // 파일 출력
+            let out = output_path.unwrap_or_else(|| {
+                let stem = Path::new(input_path)
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let ext = &result.format;
+                format!("output/{}_thumb.{}", stem, ext)
+            });
+
+            // 출력 디렉토리 생성
+            if let Some(parent) = Path::new(&out).parent() {
+                if !parent.exists() {
+                    fs::create_dir_all(parent).ok();
+                }
+            }
+
+            match fs::write(&out, &result.data) {
+                Ok(_) => {
+                    println!("썸네일 추출 완료: {} ({}x{}, {} bytes, {})",
+                        out, result.width, result.height, result.data.len(), result.format);
+                }
+                Err(e) => {
+                    eprintln!("오류: 파일 저장 실패: {} ({})", out, e);
+                    std::process::exit(1);
+                }
+            }
+        }
+    }
 }

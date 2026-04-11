@@ -749,6 +749,20 @@ impl LayoutEngine {
             } else {
                 y
             };
+            // TODO: 높이 계산 오차에 대한 임시 방어 로직.
+            // 줄 하단(text_y + line_height)이 단 하단(col_bottom)을 초과하면 col_bottom 바로 위로
+            // 클램핑하여 줄이 페이지 경계를 벗어나 시각적으로 잘리는 현상을 방지한다.
+            // current_height 누적이 정확해지면 이 코드는 제거 가능하다.
+            let col_bottom = col_area.y + col_area.height;
+            let text_y = if cell_ctx.is_none() && text_y + line_height > col_bottom + 0.5 {
+                let clamped = (col_bottom - line_height).max(col_area.y);
+                // 클램핑 결과를 y에도 반영하여 이 줄의 모든 자식 노드(TextRun 등)가
+                // 클램핑된 y를 기준으로 배치되도록 한다.
+                y = clamped;
+                clamped
+            } else {
+                text_y
+            };
             let line_id = tree.next_id();
             let mut line_node = RenderNode::new(
                 line_id,
@@ -2205,11 +2219,21 @@ impl LayoutEngine {
                 line_height * 0.8, // fallback: 줄 높이 기반 최소 어센트
             );
 
+            // TODO: 높이 계산 오차에 대한 임시 방어 로직.
+            // 줄 하단(y + line_height)이 단 하단(col_bottom)을 초과하면 col_bottom 바로 위로
+            // 클램핑하여 줄이 페이지 경계를 벗어나 시각적으로 잘리는 현상을 방지한다.
+            // current_height 누적이 정확해지면 이 코드는 제거 가능하다.
+            let col_bottom = col_area.y + col_area.height;
+            let y_clamped = if y + line_height > col_bottom + 0.5 {
+                (col_bottom - line_height).max(col_area.y)
+            } else {
+                y
+            };
             let line_id = tree.next_id();
             let mut line_node = RenderNode::new(
                 line_id,
                 RenderNodeType::TextLine(TextLineNode::new(line_height, baseline)),
-                BoundingBox::new(col_area.x, y, col_area.width, line_height),
+                BoundingBox::new(col_area.x, y_clamped, col_area.width, line_height),
             );
 
             if !para.text.is_empty() && line_idx == start_line {
@@ -2234,7 +2258,7 @@ impl LayoutEngine {
                         baseline: line_height * 0.85,
                         field_marker: FieldMarkerType::None,
                     }),
-                    BoundingBox::new(col_area.x, y, col_area.width, line_height),
+                    BoundingBox::new(col_area.x, y_clamped, col_area.width, line_height),
                 );
                 line_node.children.push(run_node);
             }

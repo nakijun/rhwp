@@ -15625,3 +15625,29 @@
         eprintln!("  인라인 TAC 표 생성 테스트 통과");
     }
 
+    #[test]
+    fn test_extract_thumbnail_with_preview() {
+        // PrvImage가 있는 HWP 파일 테스트
+        let data = std::fs::read("samples/biz_plan.hwp").expect("biz_plan.hwp 읽기 실패");
+        let result = crate::parser::extract_thumbnail_only(&data);
+        if let Some(ref r) = result {
+            eprintln!("  biz_plan.hwp 썸네일: format={}, size={}bytes, {}x{}", r.format, r.data.len(), r.width, r.height);
+            eprintln!("  매직 바이트: {:02x?}", &r.data[..std::cmp::min(16, r.data.len())]);
+        } else {
+            eprintln!("  biz_plan.hwp 썸네일: None");
+        }
+        // PrvImage 유무와 상관없이 패닉하지 않아야 함
+    }
+
+    #[test]
+    fn test_extract_thumbnail_without_preview() {
+        // 잘못된 데이터에서는 None 반환
+        let result = crate::parser::extract_thumbnail_only(&[0u8; 100]);
+        assert!(result.is_none(), "잘못된 데이터에서는 None이어야 함");
+
+        // 빈 바이트에서도 패닉하지 않아야 함
+        let result = crate::parser::extract_thumbnail_only(&[]);
+        assert!(result.is_none(), "빈 데이터에서는 None이어야 함");
+        eprintln!("  잘못된/빈 데이터 썸네일: None (정상)");
+    }
+

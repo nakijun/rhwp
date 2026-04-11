@@ -4,6 +4,7 @@
 // - 향후: 호버 미리보기, 파일 캐싱 등
 
 import { openViewer } from './viewer-launcher.js';
+import { extractThumbnailFromUrl } from './thumbnail-extractor.js';
 
 /**
  * 메시지 라우터를 설정한다.
@@ -45,6 +46,19 @@ const messageHandlers = {
       const buffer = await response.arrayBuffer();
       // ArrayBuffer는 structured clone으로 전달
       return { data: Array.from(new Uint8Array(buffer)) };
+    } catch (err) {
+      return { error: err.message };
+    }
+  },
+
+  /**
+   * Content Script → Service Worker: HWP 썸네일 추출
+   * Service Worker에서 fetch + CFB PrvImage 추출 (CORS 우회)
+   */
+  'extract-thumbnail': async (message) => {
+    try {
+      const result = await extractThumbnailFromUrl(message.url);
+      return result || { error: 'PrvImage not found' };
     } catch (err) {
       return { error: err.message };
     }
