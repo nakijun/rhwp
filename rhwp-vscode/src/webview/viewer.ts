@@ -96,6 +96,25 @@ window.addEventListener("message", (event) => {
   if (msg.type === "print") {
     window.print();
   }
+
+  if (msg.type === "exportDebugOverlay") {
+    if (!hwpDoc) {
+      vscode.postMessage({ type: "debugOverlaySvgs", error: "문서가 로드되지 않았습니다" });
+      return;
+    }
+    try {
+      hwpDoc.set_debug_overlay(true);
+      const svgs: string[] = [];
+      for (let i = 0; i < pageInfos.length; i++) {
+        svgs.push(hwpDoc.renderPageSvg(i));
+      }
+      hwpDoc.set_debug_overlay(false);
+      vscode.postMessage({ type: "debugOverlaySvgs", svgs });
+    } catch (err: any) {
+      hwpDoc.set_debug_overlay(false);
+      vscode.postMessage({ type: "debugOverlaySvgs", error: err.message ?? String(err) });
+    }
+  }
 });
 
 // ── 상태 표시줄 업데이트 ──

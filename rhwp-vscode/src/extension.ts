@@ -33,7 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("rhwp.debugOverlay", async (uri?: vscode.Uri) => {
       const target = resolveUri(uri);
       if (!target) return;
-      await cmdDebugOverlay(target, context.extensionPath);
+      await cmdDebugOverlay(target, provider);
     })
   );
 
@@ -127,35 +127,12 @@ async function cmdExportSvg(uri: vscode.Uri, extensionPath: string): Promise<voi
 
 // ── 디버그 오버레이 ───────────────────────────────────────────────
 
-async function cmdDebugOverlay(uri: vscode.Uri, extensionPath: string): Promise<void> {
-  try {
-    initWasmHost(extensionPath);
+async function cmdDebugOverlay(uri: vscode.Uri, provider: HwpEditorProvider): Promise<void> {
+  const baseName = path.basename(uri.fsPath);
+  const hash = crypto.createHash("md5").update(uri.fsPath).digest("hex").slice(0, 8);
+  const tmpFile = path.join(os.tmpdir(), `rhwp-debug-${hash}.html`);
 
-    const fileBytes = fs.readFileSync(uri.fsPath);
-    const doc: InstanceType<typeof HwpDocument> = new HwpDocument(new Uint8Array(fileBytes));
-    doc.setClipEnabled(false);
-
-    const docInfo = JSON.parse(doc.getDocumentInfo());
-    const pageCount: number = docInfo.page_count ?? docInfo.pageCount ?? 0;
-
-    if (pageCount === 0) {
-      vscode.window.showWarningMessage("페이지가 없는 문서입니다.");
-      return;
-    }
-
-    doc.set_debug_overlay(true);
-    const svgs: string[] = [];
-    for (let i = 0; i < pageCount; i++) {
-      svgs.push(doc.renderPageSvg(i));
-    }
-    doc.set_debug_overlay(false);
-    doc.free();
-
-    // 전 페이지를 하나의 HTML로 합쳐 임시 파일에 저장
-    const baseName = path.basename(uri.fsPath);
-    const hash = crypto.createHash("md5").update(uri.fsPath).digest("hex").slice(0, 8);
-    const tmpFile = path.join(os.tmpdir(), `rhwp-debug-${hash}.html`);
-
+  await provider.sendDebugOverlay(uri, (svgs) => {
     const pageHtml = svgs
       .map(
         (svg, i) =>
@@ -182,9 +159,7 @@ ${pageHtml}
 
     fs.writeFileSync(tmpFile, html, "utf8");
     vscode.commands.executeCommand("vscode.open", vscode.Uri.file(tmpFile));
-  } catch (err: any) {
-    vscode.window.showErrorMessage(`디버그 오버레이 실패: ${err.message ?? err}`);
-  }
+  });
 }
 
 // ── 문단 덤프 ─────────────────────────────────────────────────────

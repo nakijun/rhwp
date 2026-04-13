@@ -21,6 +21,20 @@ export class HwpEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
+  /** 해당 파일의 webview에 디버그 오버레이 렌더링 요청 */
+  async sendDebugOverlay(uri: vscode.Uri, onSvgs: (svgs: string[]) => void): Promise<void> {
+    const key = uri.toString();
+    const panel = this.panels.get(key);
+    this.debugOverlayCallbacks.set(key, onSvgs);
+    if (panel) {
+      panel.reveal();
+      panel.webview.postMessage({ type: "exportDebugOverlay" });
+    } else {
+      await vscode.commands.executeCommand("vscode.openWith", uri, HwpEditorProvider.viewType);
+      this.pendingDebugOverlay.add(key);
+    }
+  }
+
   /** 해당 파일의 webview에 인쇄 메시지 전송 */
   async sendPrint(uri: vscode.Uri): Promise<void> {
     const key = uri.toString();
@@ -39,6 +53,12 @@ export class HwpEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
   /** 열린 직후 인쇄해야 할 URI 집합 */
   private readonly pendingPrint = new Set<string>();
+
+  /** 열린 직후 디버그 오버레이를 내보내야 할 URI 집합 */
+  private readonly pendingDebugOverlay = new Set<string>();
+
+  /** 디버그 오버레이 SVG 응답 콜백 */
+  private readonly debugOverlayCallbacks = new Map<string, (svgs: string[]) => void>();
 
   async openCustomDocument(
     uri: vscode.Uri,
@@ -83,8 +103,21 @@ export class HwpEditorProvider implements vscode.CustomReadonlyEditorProvider {
 
         // 열리자마자 인쇄해야 하는 경우
         if (this.pendingPrint.delete(key)) {
-          // load 처리 후 약간의 지연 후 print 전송
           setTimeout(() => webview.postMessage({ type: "print" }), 500);
+        }
+        // 열리자마자 디버그 오버레이를 내보내야 하는 경우
+        if (this.pendingDebugOverlay.delete(key)) {
+          setTimeout(() => webview.postMessage({ type: "exportDebugOverlay" }), 500);
+        }
+      }
+
+      if (msg.type === "debugOverlaySvgs") {
+        const cb = this.debugOverlayCallbacks.get(key);
+        this.debugOverlayCallbacks.delete(key);
+        if (msg.error) {
+          vscode.window.showErrorMessage(`디버그 오버레이 실패: ${msg.error}`);
+        } else if (cb) {
+          cb(msg.svgs);
         }
       }
     });
