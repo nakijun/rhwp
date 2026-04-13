@@ -2373,11 +2373,22 @@ export class InputHandler {
 
     const { sec, para, ci, formType } = formHit;
 
+    // 셀 내부 폼 값 설정 헬퍼
+    const setFormVal = (valueJson: string) => {
+      if (formHit.inCell && formHit.tablePara !== undefined && formHit.tableCi !== undefined
+          && formHit.cellIdx !== undefined && formHit.cellPara !== undefined) {
+        this.wasm.setFormValueInCell(sec, formHit.tablePara, formHit.tableCi,
+          formHit.cellIdx, formHit.cellPara, ci, valueJson);
+      } else {
+        this.wasm.setFormValue(sec, para, ci, valueJson);
+      }
+    };
+
     switch (formType) {
       case 'CheckBox': {
         // 체크박스 토글: value 0↔1
         const newValue = (formHit.value ?? 0) === 0 ? 1 : 0;
-        this.wasm.setFormValue(sec, para, ci, JSON.stringify({ value: newValue }));
+        setFormVal(JSON.stringify({ value: newValue }));
         this.afterEdit();
         break;
       }

@@ -323,6 +323,7 @@ impl DocumentCore {
 
         /// 셀 bbox 정보
         struct CellBboxInfo {
+            section_index: usize,
             parent_para_index: usize,
             control_index: usize,
             cell_index: usize,
@@ -330,6 +331,8 @@ impl DocumentCore {
             y: f64,
             w: f64,
             h: f64,
+            // Table 노드에서 meta가 채워졌는지 여부 (false이면 TextRun에서만 보완됨)
+            has_meta: bool,
         }
 
         fn collect_runs(
@@ -338,6 +341,8 @@ impl DocumentCore {
             guide_runs: &mut Vec<GuideRunInfo>,
             cell_bboxes: &mut Vec<CellBboxInfo>,
             current_column: Option<u16>,
+            // Table 노드에서 전파되는 (section_index, parent_para_index, control_index)
+            current_table_meta: Option<(usize, usize, usize)>,
         ) {
             // Column 노드 진입 시 칼럼 인덱스 전파
             let col = if let RenderNodeType::Column(col_idx) = node.node_type {
@@ -345,19 +350,32 @@ impl DocumentCore {
             } else {
                 current_column
             };
+            // Table 노드 진입 시 section_index / parent_para_index / control_index 전파
+            let table_meta = if let RenderNodeType::Table(ref tn) = node.node_type {
+                match (tn.section_index, tn.para_index, tn.control_index) {
+                    (Some(si), Some(pi), Some(ci)) => Some((si, pi, ci)),
+                    _ => current_table_meta,
+                }
+            } else {
+                current_table_meta
+            };
             // TableCell 노드의 bbox 수집
             if let RenderNodeType::TableCell(ref tc) = node.node_type {
                 if let Some(cell_idx) = tc.model_cell_index {
-                    // 부모 경로에서 parent_para_index와 control_index를 추출하기 어려우므로
-                    // 자식 TextRun의 cell_context에서 가져옴 (아래에서 보완)
+                    // table_meta가 있으면 즉시 보완, 없으면 자식 TextRun에서 보완
+                    let (si, ppi, ci, has_meta) = table_meta
+                        .map(|(si, ppi, ci)| (si, ppi, ci, true))
+                        .unwrap_or((0, 0, 0, false));
                     cell_bboxes.push(CellBboxInfo {
-                        parent_para_index: 0, // 나중에 보완
-                        control_index: 0,
+                        section_index: si,
+                        parent_para_index: ppi,
+                        control_index: ci,
                         cell_index: cell_idx as usize,
                         x: node.bbox.x,
                         y: node.bbox.y,
                         w: node.bbox.width,
                         h: node.bbox.height,
+                        has_meta,
                     });
                 }
             }
@@ -401,7 +419,7 @@ impl DocumentCore {
                 }
             }
             for child in &node.children {
-                collect_runs(child, runs, guide_runs, cell_bboxes, col);
+                collect_runs(child, runs, guide_runs, cell_bboxes, col, table_meta);
             }
         }
 
@@ -447,16 +465,19 @@ impl DocumentCore {
         let mut runs: Vec<RunInfo> = Vec::new();
         let mut guide_runs: Vec<GuideRunInfo> = Vec::new();
         let mut cell_bboxes: Vec<CellBboxInfo> = Vec::new();
-        collect_runs(&tree.root, &mut runs, &mut guide_runs, &mut cell_bboxes, None);
+        collect_runs(&tree.root, &mut runs, &mut guide_runs, &mut cell_bboxes, None, None);
 
-        // cell_bboxes의 parent_para_index/control_index를 runs에서 보완
+        // cell_bboxes의 section_index/parent_para_index/control_index를 runs로 재확인하여 보완
+        // (Table 노드에서 이미 채워진 값이 있어도 runs에서 더 정확한 값을 덮어씀)
         for cb in &mut cell_bboxes {
             if let Some(run) = runs.iter().find(|r| {
                 r.cell_context.as_ref().map(|ctx| ctx.path[0].cell_index == cb.cell_index).unwrap_or(false)
             }) {
                 if let Some(ref ctx) = run.cell_context {
+                    cb.section_index = run.section_index;
                     cb.parent_para_index = ctx.parent_para_index;
                     cb.control_index = ctx.path[0].control_index;
+                    cb.has_meta = true;
                 }
             }
         }
@@ -634,6 +655,22 @@ impl DocumentCore {
                     }
                 }
                 return Ok(format_hit(best, best_offset, page_num));
+            }
+
+            // 양식 컨트롤(FormObject)만 있는 셀: TextRun이 없어 cell_runs가 비어있음.
+            // table_meta(또는 runs)에서 채워진 meta로 커서 진입.
+            if cb.has_meta {
+                return Ok(format!(
+                    "{{\"sectionIndex\":{},\"paragraphIndex\":{},\"charOffset\":0,\
+                     \"parentParaIndex\":{},\"controlIndex\":{},\"cellIndex\":{},\"cellParaIndex\":0,\
+                     \"cellPath\":[{{\"controlIndex\":{},\"cellIndex\":{},\"cellParaIndex\":0}}],\
+                     \"cursorRect\":{{\"pageIndex\":{},\"x\":{:.1},\"y\":{:.1},\"height\":{:.1}}}}}",
+                    cb.section_index, cb.parent_para_index,
+                    cb.parent_para_index, cb.control_index, cb.cell_index,
+                    cb.control_index, cb.cell_index,
+                    page_num,
+                    cb.x + 2.0, cb.y + 2.0, cb.h.max(4.0) - 4.0
+                ));
             }
         }
 

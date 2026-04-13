@@ -202,7 +202,14 @@
       card.appendChild(createDiv('rhwp-hover-meta', `${ext} \uBB38\uC11C`));
     }
 
-    card.appendChild(createDiv('rhwp-hover-action', '클릭하여 rhwp로 열기'));
+    // 풋터 바 — 카드 전체 클릭 영역 암시
+    const footer = document.createElement('div');
+    footer.className = 'rhwp-hover-action';
+    const footerLabel = createDiv('rhwp-hover-action-label', '▶\u2002rhwp로 열기');
+    const footerArrow = createDiv('rhwp-hover-action-arrow', '→');
+    footer.appendChild(footerLabel);
+    footer.appendChild(footerArrow);
+    card.appendChild(footer);
 
     // 위치 계산: 링크 아래에 표시, 뷰포트 넘치면 위로
     const rect = anchor.getBoundingClientRect();

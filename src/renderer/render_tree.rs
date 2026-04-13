@@ -232,12 +232,15 @@ pub struct FormObjectNode {
     pub enabled: bool,
     /// 문서 위치: 구역 인덱스
     pub section_index: usize,
-    /// 문서 위치: 문단 인덱스
+    /// 문서 위치: 문단 인덱스 (셀 내부인 경우 셀 내 문단 인덱스)
     pub para_index: usize,
     /// 문서 위치: 컨트롤 인덱스
     pub control_index: usize,
     /// 양식 개체 이름
     pub name: String,
+    /// 셀 내부 위치 (표 셀 안에 있는 경우)
+    /// (table_para_index, table_control_index, cell_index, cell_para_index)
+    pub cell_location: Option<(usize, usize, usize, usize)>,
 }
 
 /// 바운딩 박스 (위치 + 크기, 픽셀 단위)

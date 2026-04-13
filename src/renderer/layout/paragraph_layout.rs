@@ -1573,6 +1573,11 @@ impl LayoutEngine {
                             if let Some(Control::Form(f)) = p.controls.get(tac_ci) {
                                 let form_h = hwpunit_to_px(f.height as i32, self.dpi);
                                 let form_y = (y + baseline - form_h).max(y);
+                                // 셀 내부인 경우 cell_location 채우기
+                                let cell_location = cell_ctx.as_ref().map(|ctx| {
+                                    let e = &ctx.path[0];
+                                    (ctx.parent_para_index, e.control_index, e.cell_index, e.cell_para_index)
+                                });
                                 let form_node = RenderNode::new(
                                     tree.next_id(),
                                     RenderNodeType::FormObject(FormObjectNode {
@@ -1587,6 +1592,7 @@ impl LayoutEngine {
                                         para_index,
                                         control_index: tac_ci,
                                         name: f.name.clone(),
+                                        cell_location,
                                     }),
                                     BoundingBox::new(x, form_y, tac_w, form_h),
                                 );
@@ -1740,6 +1746,10 @@ impl LayoutEngine {
                         if let Some(Control::Form(f)) = p.controls.get(tac_ci) {
                             let form_h = hwpunit_to_px(f.height as i32, self.dpi);
                             let form_y = (y + baseline - form_h).max(y);
+                            let cell_location = cell_ctx.as_ref().map(|ctx| {
+                                let e = &ctx.path[0];
+                                (ctx.parent_para_index, e.control_index, e.cell_index, e.cell_para_index)
+                            });
                             let form_node = RenderNode::new(
                                 tree.next_id(),
                                 RenderNodeType::FormObject(FormObjectNode {
@@ -1754,6 +1764,7 @@ impl LayoutEngine {
                                     para_index,
                                     control_index: tac_ci,
                                     name: f.name.clone(),
+                                    cell_location,
                                 }),
                                 BoundingBox::new(x, form_y, tac_w, form_h),
                             );

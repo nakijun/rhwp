@@ -515,6 +515,12 @@ export interface FormObjectHitResult {
   caption?: string;
   text?: string;
   bbox?: { x: number; y: number; w: number; h: number };
+  // 셀 내부 위치 (표 셀 안에 있는 경우)
+  inCell?: boolean;
+  tablePara?: number;
+  tableCi?: number;
+  cellIdx?: number;
+  cellPara?: number;
 }
 
 /** 양식 개체 값 정보 */

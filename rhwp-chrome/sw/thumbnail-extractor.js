@@ -51,7 +51,7 @@ export async function extractThumbnailFromUrl(url) {
  * - 디렉토리 엔트리에서 "PrvImage" 이름을 찾아 스트림 위치/크기 파악
  * - 해당 섹터 체인을 따라 데이터 읽기
  *
- * 간소화 구현: 바이너리에서 이미지 시그니처를 직접 탐색
+ * 디렉토리 섹터도 FAT 체인으로 연결될 수 있으므로 체인 전체를 순회한다.
  */
 function extractPrvImage(data) {
   // CFB 매직 넘버 확인
@@ -62,62 +62,153 @@ function extractPrvImage(data) {
   const sectorSizePow = data[30] | (data[31] << 8);
   const sectorSize = 1 << sectorSizePow; // 보통 512
 
-  // 디렉토리 엔트리에서 "PrvImage" 찾기
-  // CFB 첫 번째 디렉토리 섹터 위치: 헤더 offset 48 (4바이트 LE)
+  const miniSectorSizePow = data[32] | (data[33] << 8);
+  const miniSectorSize = 1 << miniSectorSizePow; // 보통 64
+
+  const miniStreamCutoff = readU32LE(data, 56); // 보통 4096
+  const miniFatStart     = readU32LE(data, 60);
+
+  // FAT 테이블 구성
+  const fatEntries = buildFatTable(data, sectorSize);
+
+  // Root Entry에서 Mini Stream 위치/크기 읽기 (offset 48: dirStartSector)
   const dirStartSector = readU32LE(data, 48);
-  const dirOffset = (dirStartSector + 1) * sectorSize;
+  const rootOffset = (dirStartSector + 1) * sectorSize;
+  const miniStreamStart = readU32LE(data, rootOffset + 116);
+  const miniStreamSize  = readU32LE(data, rootOffset + 120);
 
-  // 디렉토리 엔트리 순회 (각 128바이트)
-  for (let i = 0; i < 128; i++) { // 최대 128개 엔트리 탐색
-    const entryOffset = dirOffset + i * 128;
-    if (entryOffset + 128 > data.length) break;
+  // Mini FAT 구성
+  const miniFatEntries = buildMiniFatTable(data, sectorSize, miniFatStart, fatEntries);
 
-    // 엔트리 이름 읽기 (UTF-16LE)
-    const nameLen = readU16LE(data, entryOffset + 64); // 바이트 단위 이름 길이
-    if (nameLen === 0 || nameLen > 64) continue;
+  // Mini Stream 데이터 (Root Entry FAT 체인)
+  const miniStreamData = readStreamFromFAT(data, miniStreamStart, miniStreamSize, sectorSize, fatEntries);
 
-    const name = readUTF16LE(data, entryOffset, nameLen);
-    if (name !== 'PrvImage') continue;
+  // 디렉토리 섹터 FAT 체인을 따라 전체 순회
+  const entriesPerSector = sectorSize / 128;
+  let dirSector = dirStartSector;
 
-    // 스트림 시작 섹터와 크기
-    const startSector = readU32LE(data, entryOffset + 116);
-    const streamSize = readU32LE(data, entryOffset + 120);
+  while (dirSector < 0xFFFFFFFE) {
+    const dirOffset = (dirSector + 1) * sectorSize;
 
-    if (streamSize === 0 || streamSize > 10 * 1024 * 1024) continue; // 10MB 제한
+    for (let i = 0; i < entriesPerSector; i++) {
+      const entryOffset = dirOffset + i * 128;
+      if (entryOffset + 128 > data.length) break;
 
-    // FAT 체인을 따라 데이터 읽기
-    const streamData = readStreamFromFAT(data, startSector, streamSize, sectorSize);
-    if (!streamData) continue;
+      // 엔트리 이름 읽기 (UTF-16LE)
+      const nameLen = readU16LE(data, entryOffset + 64);
+      if (nameLen === 0 || nameLen > 64) continue;
 
-    return parseImageData(streamData);
+      const name = readUTF16LE(data, entryOffset, nameLen);
+      if (name !== 'PrvImage') continue;
+
+      const startSector = readU32LE(data, entryOffset + 116);
+      const streamSize  = readU32LE(data, entryOffset + 120);
+
+      if (streamSize === 0 || streamSize > 10 * 1024 * 1024) continue;
+
+      let streamData;
+      if (streamSize < miniStreamCutoff && miniStreamData) {
+        // Mini Stream에서 읽기
+        streamData = readStreamFromMini(miniStreamData, startSector, streamSize, miniSectorSize, miniFatEntries);
+      } else {
+        // 일반 FAT 체인에서 읽기
+        streamData = readStreamFromFAT(data, startSector, streamSize, sectorSize, fatEntries);
+      }
+      if (!streamData) continue;
+
+      return parseImageData(streamData);
+    }
+
+    // 다음 디렉토리 섹터로 이동
+    dirSector = dirSector < fatEntries.length ? fatEntries[dirSector] : 0xFFFFFFFE;
   }
 
   return null;
 }
 
 /**
- * FAT 체인을 따라 스트림 데이터를 읽는다.
+ * CFB Mini FAT 테이블을 구성하여 반환한다.
+ *
+ * Mini FAT 섹터들은 일반 FAT 체인으로 연결된다.
  */
-function readStreamFromFAT(data, startSector, streamSize, sectorSize) {
-  // FAT (File Allocation Table) 읽기
-  // FAT 시작: 헤더 offset 44에 DIFAT 첫 번째 엔트리 → 실제로는 헤더 offset 76부터 109개 DIFAT 엔트리
-  const fatSectors = [];
+function buildMiniFatTable(data, sectorSize, miniFatStart, fatEntries) {
+  const miniFatEntries = [];
+  let sector = miniFatStart;
+  for (let safety = 0; safety < 10000; safety++) {
+    if (sector >= 0xFFFFFFFE) break;
+    const offset = (sector + 1) * sectorSize;
+    const entriesPerSector = sectorSize / 4;
+    for (let j = 0; j < entriesPerSector; j++) {
+      const off = offset + j * 4;
+      if (off + 4 > data.length) break;
+      miniFatEntries.push(readU32LE(data, off));
+    }
+    sector = sector < fatEntries.length ? fatEntries[sector] : 0xFFFFFFFE;
+  }
+  return miniFatEntries;
+}
+
+/**
+ * Mini Stream에서 Mini FAT 체인을 따라 데이터를 읽는다.
+ *
+ * @param {Uint8Array} miniStream - Root Entry의 Mini Stream 전체 데이터
+ * @param {number} startSector - Mini Stream 내 시작 미니 섹터 번호
+ * @param {number} streamSize - 읽을 바이트 수
+ * @param {number} miniSectorSize - 미니 섹터 크기 (보통 64)
+ * @param {number[]} miniFatEntries - Mini FAT 테이블
+ */
+function readStreamFromMini(miniStream, startSector, streamSize, miniSectorSize, miniFatEntries) {
+  const result = new Uint8Array(streamSize);
+  let sector = startSector;
+  let bytesRead = 0;
+
+  for (let safety = 0; safety < 10000 && bytesRead < streamSize; safety++) {
+    if (sector >= 0xFFFFFFFE) break;
+    const offset = sector * miniSectorSize;
+    const copyLen = Math.min(miniSectorSize, streamSize - bytesRead);
+    if (offset + copyLen > miniStream.length) break;
+    result.set(miniStream.subarray(offset, offset + copyLen), bytesRead);
+    bytesRead += copyLen;
+    sector = sector < miniFatEntries.length ? miniFatEntries[sector] : 0xFFFFFFFE;
+  }
+
+  return bytesRead >= streamSize ? result : null;
+}
+
+/**
+ * CFB FAT 테이블을 구성하여 반환한다.
+ *
+ * 헤더 offset 76~507의 DIFAT 엔트리(최대 109개)에서 FAT 섹터 목록을 읽고,
+ * 각 FAT 섹터를 순회하여 sector → nextSector 매핑 배열을 반환한다.
+ */
+function buildFatTable(data, sectorSize) {
+  const fatEntries = [];
   for (let i = 0; i < 109; i++) {
     const fatSect = readU32LE(data, 76 + i * 4);
     if (fatSect === 0xFFFFFFFE || fatSect === 0xFFFFFFFF) break;
-    fatSectors.push(fatSect);
-  }
-
-  // FAT 테이블 구성
-  const fatEntries = [];
-  for (const fs of fatSectors) {
-    const fatOffset = (fs + 1) * sectorSize;
+    const fatOffset = (fatSect + 1) * sectorSize;
     const entriesPerSector = sectorSize / 4;
     for (let j = 0; j < entriesPerSector; j++) {
       const off = fatOffset + j * 4;
       if (off + 4 > data.length) break;
       fatEntries.push(readU32LE(data, off));
     }
+  }
+  return fatEntries;
+}
+
+/**
+ * FAT 체인을 따라 스트림 데이터를 읽는다.
+ *
+ * @param {Uint8Array} data - CFB 전체 바이너리
+ * @param {number} startSector - 스트림 시작 섹터 번호
+ * @param {number} streamSize - 읽을 바이트 수
+ * @param {number} sectorSize - 섹터 크기 (바이트)
+ * @param {number[]} [fatEntries] - 미리 구성된 FAT 테이블 (없으면 내부 구성)
+ */
+function readStreamFromFAT(data, startSector, streamSize, sectorSize, fatEntries) {
+  if (!fatEntries) {
+    fatEntries = buildFatTable(data, sectorSize);
   }
 
   // 섹터 체인을 따라 데이터 수집

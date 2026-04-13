@@ -9,6 +9,7 @@ use quick_xml::Reader;
 use crate::model::control::{
     Control, Equation, PageHide, PageNumberPos, AutoNumber, AutoNumberType,
     NewNumber, Bookmark, Field, FieldType, HiddenComment, Ruby, CharOverlap,
+    FormObject, FormType,
 };
 use crate::model::header_footer::{Header, Footer, HeaderFooterApply};
 use crate::model::footnote::{Footnote, Endnote};
@@ -26,7 +27,7 @@ use crate::model::table::{Cell, Table, TablePageBreak, VerticalAlign};
 use crate::model::HwpUnit16;
 
 use super::HwpxError;
-use super::utils::{local_name, attr_str, parse_u8, parse_i8, parse_u16, parse_i16, parse_u32, parse_i32, parse_color, skip_element};
+use super::utils::{local_name, attr_str, parse_u8, parse_i8, parse_u16, parse_i16, parse_u32, parse_i32, parse_color, parse_bool, skip_element};
 
 /// section*.xml을 파싱하여 Section 모델로 변환한다.
 pub fn parse_hwpx_section(xml: &str) -> Result<Section, HwpxError> {
@@ -222,6 +223,31 @@ fn parse_paragraph(
                     b"equation" => {
                         // 수식 — 개체(ShapeObject)로 처리
                         let ctrl = parse_equation(ce, reader)?;
+                        text_parts.push("\u{0002}".to_string());
+                        para.controls.push(ctrl);
+                    }
+                    b"btn" => {
+                        let ctrl = parse_form_object(FormType::PushButton, ce, reader)?;
+                        text_parts.push("\u{0002}".to_string());
+                        para.controls.push(ctrl);
+                    }
+                    b"checkBtn" => {
+                        let ctrl = parse_form_object(FormType::CheckBox, ce, reader)?;
+                        text_parts.push("\u{0002}".to_string());
+                        para.controls.push(ctrl);
+                    }
+                    b"radioBtn" => {
+                        let ctrl = parse_form_object(FormType::RadioButton, ce, reader)?;
+                        text_parts.push("\u{0002}".to_string());
+                        para.controls.push(ctrl);
+                    }
+                    b"comboBox" => {
+                        let ctrl = parse_form_object(FormType::ComboBox, ce, reader)?;
+                        text_parts.push("\u{0002}".to_string());
+                        para.controls.push(ctrl);
+                    }
+                    b"edit" => {
+                        let ctrl = parse_form_object(FormType::Edit, ce, reader)?;
                         text_parts.push("\u{0002}".to_string());
                         para.controls.push(ctrl);
                     }
@@ -2678,7 +2704,115 @@ fn calc_utf16_len_from_parts(parts: &[String]) -> u32 {
         .sum()
 }
 
+// ─── 양식 컨트롤 파싱 ───
 
+/// HWPX 양식 컨트롤 요소(`<hp:btn>`, `<hp:checkBtn>`, `<hp:radioBtn>`,
+/// `<hp:comboBox>`, `<hp:edit>`)를 파싱하여 `Control::Form`으로 반환한다.
+///
+/// 요소는 `<hp:run>` 직접 자식으로 위치하며, `<hp:sz>` / `<hp:listItem>` /
+/// `<hp:text>` / `<hp:formCharPr>` 등의 자식 요소를 포함한다.
+fn parse_form_object(
+    form_type: FormType,
+    e: &quick_xml::events::BytesStart,
+    reader: &mut Reader<&[u8]>,
+) -> Result<Control, HwpxError> {
+    let mut form = FormObject {
+        form_type,
+        enabled: true,
+        ..Default::default()
+    };
+
+    // 요소 속성 파싱 (AbstractFormObjectType + AbstractButtonObjectType)
+    for attr in e.attributes().flatten() {
+        match attr.key.as_ref() {
+            b"name"       => form.name    = attr_str(&attr),
+            b"caption"    => form.caption = attr_str(&attr),
+            b"foreColor"  => form.fore_color  = parse_color(&attr),
+            b"backColor"  => form.back_color  = parse_color(&attr),
+            b"enabled"    => form.enabled = parse_bool(&attr),
+            b"value"      => form.value   = if attr_str(&attr) == "CHECKED" { 1 } else { 0 },
+            b"selectedValue" => form.text = attr_str(&attr), // comboBox 선택값
+            _ => {}
+        }
+    }
+
+    // 자식 요소 순회
+    let end_tag = local_name(e.name().as_ref()).to_vec();
+    let mut buf = Vec::new();
+    let mut list_items: Vec<String> = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref ce)) => {
+                let cname = ce.name();
+                let local = local_name(cname.as_ref());
+                match local {
+                    b"text" => {
+                        // <hp:text> 자식 (edit 컨트롤) — 텍스트 내용 읽기
+                        let mut tbuf = Vec::new();
+                        loop {
+                            match reader.read_event_into(&mut tbuf) {
+                                Ok(Event::Text(ref t)) => {
+                                    if let Ok(s) = t.unescape() {
+                                        form.text.push_str(&s);
+                                    }
+                                }
+                                Ok(Event::End(_)) => break,
+                                Ok(Event::Eof) => break,
+                                _ => {}
+                            }
+                            tbuf.clear();
+                        }
+                    }
+                    _ => { skip_element(reader, local)?; }
+                }
+            }
+            Ok(Event::Empty(ref ce)) => {
+                let cname = ce.name();
+                let local = local_name(cname.as_ref());
+                match local {
+                    b"sz" => {
+                        // <hp:sz width="..." height="..."/>
+                        for attr in ce.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"width"  => form.width  = parse_u32(&attr),
+                                b"height" => form.height = parse_u32(&attr),
+                                _ => {}
+                            }
+                        }
+                    }
+                    b"listItem" => {
+                        // <hp:listItem value="..."/> (comboBox 항목)
+                        for attr in ce.attributes().flatten() {
+                            if attr.key.as_ref() == b"value" {
+                                list_items.push(attr_str(&attr));
+                            }
+                        }
+                    }
+                    _ => {} // formCharPr 등 무시
+                }
+            }
+            Ok(Event::End(ref ee)) => {
+                if local_name(ee.name().as_ref()) == end_tag.as_slice() {
+                    break;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(HwpxError::XmlError(format!("form_object: {}", e))),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    // comboBox 항목 목록을 properties에 저장
+    if !list_items.is_empty() {
+        for (i, item) in list_items.iter().enumerate() {
+            form.properties.insert(format!("listItem{}", i), item.clone());
+        }
+    }
+
+    Ok(Control::Form(Box::new(form)))
+}
 
 #[cfg(test)]
 mod tests {

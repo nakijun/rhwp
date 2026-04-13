@@ -1191,6 +1191,12 @@ export class WasmBridge {
     return JSON.parse((this.doc as any).setFormValue(sec, para, ci, valueJson));
   }
 
+  /** 셀 내부 양식 개체 값을 설정한다. */
+  setFormValueInCell(sec: number, tablePara: number, tableCi: number, cellIdx: number, cellPara: number, formCi: number, valueJson: string): { ok: boolean } {
+    if (!this.doc || typeof (this.doc as any).setFormValueInCell !== 'function') return { ok: false };
+    return JSON.parse((this.doc as any).setFormValueInCell(sec, tablePara, tableCi, cellIdx, cellPara, formCi, valueJson));
+  }
+
   /** 양식 개체 상세 정보를 반환한다. */
   getFormObjectInfo(sec: number, para: number, ci: number): import('./types').FormObjectInfoResult {
     if (!this.doc || typeof (this.doc as any).getFormObjectInfo !== 'function') return { ok: false };

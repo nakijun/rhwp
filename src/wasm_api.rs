@@ -2158,6 +2158,33 @@ impl HwpDocument {
             .map_err(|e| e.into())
     }
 
+    /// 셀 내부 양식 개체 값을 설정한다.
+    ///
+    /// table_para: 표를 포함한 최상위 문단 인덱스
+    /// table_ci: 표 컨트롤 인덱스
+    /// cell_idx: 셀 인덱스
+    /// cell_para: 셀 내 문단 인덱스
+    /// form_ci: 셀 내 양식 컨트롤 인덱스
+    /// value_json: `{"value":1}` 또는 `{"text":"입력값"}`
+    /// 반환: `{ok}`
+    #[wasm_bindgen(js_name = setFormValueInCell)]
+    pub fn set_form_value_in_cell(
+        &mut self,
+        sec: u32,
+        table_para: u32,
+        table_ci: u32,
+        cell_idx: u32,
+        cell_para: u32,
+        form_ci: u32,
+        value_json: &str,
+    ) -> Result<String, JsValue> {
+        self.core.set_form_value_in_cell_native(
+            sec as usize, table_para as usize, table_ci as usize,
+            cell_idx as usize, cell_para as usize, form_ci as usize,
+            value_json,
+        ).map_err(|e| e.into())
+    }
+
     /// 양식 개체 상세 정보를 반환한다 (properties 포함).
     ///
     /// 반환: `{ok, formType, name, value, text, caption, enabled, width, height, foreColor, backColor, properties}`

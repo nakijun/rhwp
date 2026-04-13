@@ -4,6 +4,7 @@
 
 use crate::document_core::DocumentCore;
 use crate::model::control::{Control, FormType};
+use crate::model::table::Table;
 use crate::renderer::render_tree::{RenderNode, RenderNodeType, FormObjectNode};
 
 impl DocumentCore {
@@ -21,17 +22,32 @@ impl DocumentCore {
 
         if let Some((form, bbox)) = find_form_node_at(&tree.root, x, y) {
             let form_type_str = form_type_to_str(form.form_type);
+            // 셀 내부 위치 정보 직렬화
+            let cell_loc_json = if let Some((tpi, tci, ci_idx, cp_idx)) = form.cell_location {
+                format!(r#","inCell":true,"tablePara":{},"tableCi":{},"cellIdx":{},"cellPara":{}"#,
+                    tpi, tci, ci_idx, cp_idx)
+            } else {
+                String::new()
+            };
+            // sec/para는 최상위 문단 인덱스로 반환
+            // cell_location이 있으면 table_para_index를 para로 사용
+            let (ret_para, ret_ci) = if let Some((tpi, _tci, _ci_idx, _cp_idx)) = form.cell_location {
+                (tpi, form.control_index)
+            } else {
+                (form.para_index, form.control_index)
+            };
             Ok(format!(
-                r#"{{"found":true,"sec":{},"para":{},"ci":{},"formType":"{}","name":"{}","value":{},"caption":"{}","text":"{}","bbox":{{"x":{},"y":{},"w":{},"h":{}}}}}"#,
+                r#"{{"found":true,"sec":{},"para":{},"ci":{},"formType":"{}","name":"{}","value":{},"caption":"{}","text":"{}","bbox":{{"x":{},"y":{},"w":{},"h":{}}}{}}}"#,
                 form.section_index,
-                form.para_index,
-                form.control_index,
+                ret_para,
+                ret_ci,
                 form_type_str,
                 escape_json(&form.name),
                 form.value,
                 escape_json(&form.caption),
                 escape_json(&form.text),
                 bbox.0, bbox.1, bbox.2, bbox.3,
+                cell_loc_json,
             ))
         } else {
             Ok(r#"{"found":false}"#.to_string())
@@ -66,7 +82,7 @@ impl DocumentCore {
         }
     }
 
-    /// 양식 개체 값을 설정한다.
+    /// 양식 개체 값을 설정한다 (최상위 문단의 Form).
     ///
     /// value_json: `{"value":1}` 또는 `{"text":"입력값"}` 또는 둘 다
     pub fn set_form_value_native(
@@ -82,23 +98,47 @@ impl DocumentCore {
 
         match control {
             Some(Control::Form(f)) => {
-                // 간단한 JSON 파싱 (value, text 필드)
-                if let Some(v) = extract_json_int(value_json, "value") {
-                    f.value = v;
-                }
-                if let Some(t) = extract_json_string(value_json, "text") {
-                    f.text = t;
-                }
-                if let Some(c) = extract_json_string(value_json, "caption") {
-                    f.caption = c;
-                }
-
-                // 재조판 + 캐시 무효화
+                apply_form_value(f, value_json);
                 self.recompose_section(sec);
-
                 Ok(r#"{"ok":true}"#.to_string())
             }
             _ => Ok(r#"{"ok":false,"error":"not a form object"}"#.to_string()),
+        }
+    }
+
+    /// 셀 내부 양식 개체 값을 설정한다.
+    ///
+    /// table_para: 표를 포함한 최상위 문단 인덱스
+    /// table_ci: 표 컨트롤 인덱스
+    /// cell_idx: 셀 인덱스
+    /// cell_para: 셀 내 문단 인덱스
+    /// form_ci: 셀 내 양식 컨트롤 인덱스
+    pub fn set_form_value_in_cell_native(
+        &mut self,
+        sec: usize,
+        table_para: usize,
+        table_ci: usize,
+        cell_idx: usize,
+        cell_para: usize,
+        form_ci: usize,
+        value_json: &str,
+    ) -> Result<String, crate::error::HwpError> {
+        let form = self.document.sections.get_mut(sec)
+            .and_then(|s| s.paragraphs.get_mut(table_para))
+            .and_then(|p| p.controls.get_mut(table_ci))
+            .and_then(|c| if let Control::Table(ref mut t) = c { Some(t.as_mut()) } else { None })
+            .and_then(|t: &mut Table| t.cells.get_mut(cell_idx))
+            .and_then(|cell| cell.paragraphs.get_mut(cell_para))
+            .and_then(|p| p.controls.get_mut(form_ci))
+            .and_then(|c| if let Control::Form(ref mut f) = c { Some(f) } else { None });
+
+        match form {
+            Some(f) => {
+                apply_form_value(f, value_json);
+                self.recompose_section(sec);
+                Ok(r#"{"ok":true}"#.to_string())
+            }
+            None => Ok(r#"{"ok":false,"error":"cell form not found"}"#.to_string()),
         }
     }
 
@@ -158,6 +198,19 @@ impl DocumentCore {
             }
             _ => Ok(r#"{"ok":false,"error":"not a form object"}"#.to_string()),
         }
+    }
+}
+
+/// form value/text/caption 적용 헬퍼
+fn apply_form_value(f: &mut crate::model::control::FormObject, value_json: &str) {
+    if let Some(v) = extract_json_int(value_json, "value") {
+        f.value = v;
+    }
+    if let Some(t) = extract_json_string(value_json, "text") {
+        f.text = t;
+    }
+    if let Some(c) = extract_json_string(value_json, "caption") {
+        f.caption = c;
     }
 }
 

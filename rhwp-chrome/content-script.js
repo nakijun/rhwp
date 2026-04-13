@@ -38,6 +38,39 @@
   (document.head || document.documentElement).appendChild(devScript);
   devScript.onload = () => devScript.remove();
 
+  // ─── 유틸리티 ───
+
+  // DOM API로 안전하게 텍스트 요소 생성 (innerHTML 미사용 — H-01 XSS 방어)
+  function createEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  // 보안: 텍스트 길이 제한
+  function truncate(str, max) {
+    if (!str) return '';
+    return str.length > max ? str.slice(0, max) + '…' : str;
+  }
+
+  // 보안: 안전한 이미지 URL인지 검증 (javascript: 등 차단)
+  function isSafeImageUrl(url) {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === 'https:' || parsed.protocol === 'http:';
+    } catch { return false; }
+  }
+
+  function insertThumbnailImg(thumbDiv, dataUri) {
+    const img = document.createElement('img');
+    img.src = dataUri;
+    img.alt = '미리보기';
+    img.referrerPolicy = 'no-referrer';
+    thumbDiv.className = 'rhwp-hover-thumb';
+    thumbDiv.appendChild(img);
+  }
+
   // ─── 링크 감지 ───
 
   function isHwpLink(anchor) {
@@ -97,50 +130,58 @@
     const format = anchor.getAttribute('data-hwp-format');
     const thumbnail = anchor.getAttribute('data-hwp-thumbnail');
 
-    let html = '';
-
     // 썸네일 영역 (사전 지정 또는 자동 추출 후 삽입)
-    if (thumbnail) {
-      html += `<div class="rhwp-hover-thumb"><img src="${thumbnail}" alt="미리보기"></div>`;
+    // DOM API로 안전하게 생성 — innerHTML 미사용 (H-01 XSS 방어)
+    const thumbContainer = document.createElement('div');
+    if (thumbnail && isSafeImageUrl(thumbnail)) {
+      insertThumbnailImg(thumbContainer, thumbnail);
     } else {
       // 자동 추출 플레이스홀더
-      html += `<div class="rhwp-hover-thumb rhwp-thumb-loading"><span class="rhwp-thumb-spinner">⏳</span></div>`;
+      thumbContainer.className = 'rhwp-hover-thumb rhwp-thumb-loading';
+      thumbContainer.appendChild(createEl('span', 'rhwp-thumb-spinner', '⏳'));
     }
+    card.appendChild(thumbContainer);
 
-    if (title) {
-      html += `<div class="rhwp-hover-title">${title}</div>`;
-    } else {
-      // 파일명에서 제목 추출
-      const fileName = anchor.href.split('/').pop().split('?')[0];
-      html += `<div class="rhwp-hover-title">${fileName}</div>`;
-    }
+    const titleText = title || anchor.href.split('/').pop().split('?')[0];
+    card.appendChild(createEl('div', 'rhwp-hover-title', truncate(titleText, 200)));
 
     const meta = [];
-    if (format) meta.push(format.toUpperCase());
-    if (pages) meta.push(`${pages}쪽`);
-    if (size) meta.push(formatSize(Number(size)));
+    if (format) meta.push(truncate(format.toUpperCase(), 10));
+    if (pages && !isNaN(Number(pages))) meta.push(`${pages}쪽`);
+    if (size && !isNaN(Number(size))) meta.push(formatSize(Number(size)));
     if (meta.length > 0) {
-      html += `<div class="rhwp-hover-meta">${meta.join(' · ')}</div>`;
+      card.appendChild(createEl('div', 'rhwp-hover-meta', meta.join(' · ')));
     }
 
     if (author || date) {
       const info = [];
-      if (author) info.push(author);
-      if (date) info.push(date);
-      html += `<div class="rhwp-hover-info">${info.join(' · ')}</div>`;
+      if (author) info.push(truncate(author, 100));
+      if (date) info.push(truncate(date, 20));
+      card.appendChild(createEl('div', 'rhwp-hover-info', info.join(' · ')));
     }
 
     if (category) {
-      html += `<div class="rhwp-hover-category">${category}</div>`;
+      card.appendChild(createEl('div', 'rhwp-hover-category', truncate(category, 50)));
     }
 
     if (description) {
-      html += `<div class="rhwp-hover-desc">${description}</div>`;
+      card.appendChild(createEl('div', 'rhwp-hover-desc', truncate(description, 500)));
     }
 
-    html += `<div class="rhwp-hover-action">클릭하여 rhwp로 열기</div>`;
+    // 풋터 바 — 카드 전체 클릭 영역 암시
+    const footer = document.createElement('div');
+    footer.className = 'rhwp-hover-action';
+    const footerLabel = createEl('span', 'rhwp-hover-action-label', '▶\u2002rhwp로 열기');
+    const footerArrow = createEl('span', 'rhwp-hover-action-arrow', '→');
+    footer.appendChild(footerLabel);
+    footer.appendChild(footerArrow);
+    card.appendChild(footer);
 
-    card.innerHTML = html;
+    // 카드 전체 클릭 시 HWP 열기
+    card.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'open-hwp', url: anchor.href });
+      hideHoverCard();
+    });
 
     // 위치 계산 — 뷰포트 하단을 넘으면 링크 위쪽에 표시
     const rect = anchor.getBoundingClientRect();
@@ -188,8 +229,7 @@
         // 캐시 히트: 즉시 표시
         const thumbDiv = card.querySelector('.rhwp-thumb-loading');
         if (thumbDiv) {
-          thumbDiv.className = 'rhwp-hover-thumb';
-          thumbDiv.innerHTML = `<img src="${cached.dataUri}" alt="미리보기">`;
+          insertThumbnailImg(thumbDiv, cached.dataUri);
         }
       } else if (cached === null) {
         // 이전에 추출 실패한 URL: 플레이스홀더 제거
@@ -205,8 +245,7 @@
               if (activeCard === card) {
                 const thumbDiv = card.querySelector('.rhwp-thumb-loading');
                 if (thumbDiv) {
-                  thumbDiv.className = 'rhwp-hover-thumb';
-                  thumbDiv.innerHTML = `<img src="${response.dataUri}" alt="미리보기">`;
+                  insertThumbnailImg(thumbDiv, response.dataUri);
                 }
               }
             } else {
