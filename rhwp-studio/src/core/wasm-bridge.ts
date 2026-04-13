@@ -959,6 +959,11 @@ export class WasmBridge {
     this.doc.setShowControlCodes(enabled);
   }
 
+  getShowTransparentBorders(): boolean {
+    if (!this.doc) return false;
+    return this.doc.getShowTransparentBorders();
+  }
+
   setShowTransparentBorders(enabled: boolean): void {
     if (!this.doc) throw new Error('문서가 로드되지 않았습니다');
     this.doc.setShowTransparentBorders(enabled);

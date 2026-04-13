@@ -60,6 +60,12 @@ const chordMapN: Record<string, string> = {
   ㄴ: 'page:hide', // 한글 IME
 };
 
+/** 코드 단축키 → 커맨드 ID 매핑 (Alt+V,? 형태 — 보기 메뉴) */
+const chordMapV: Record<string, string> = {
+  t: 'view:border-transparent',
+  ㅅ: 'view:border-transparent', // 한글 IME
+};
+
 /**
  * 키보드 이벤트 처리 순서:
  *
@@ -94,6 +100,16 @@ export function onKeyDown(this: any, e: KeyboardEvent): void {
     this._pendingChordN = false;
     const key = e.key.toLowerCase();
     const cmdId = chordMapN[key];
+    if (cmdId && this.dispatcher) {
+      e.preventDefault();
+      this.dispatcher.dispatch(cmdId);
+      return;
+    }
+  }
+  if (this._pendingChordV) {
+    this._pendingChordV = false;
+    const key = e.key.toLowerCase();
+    const cmdId = chordMapV[key];
     if (cmdId && this.dispatcher) {
       e.preventDefault();
       this.dispatcher.dispatch(cmdId);
@@ -637,6 +653,12 @@ export function onKeyDown(this: any, e: KeyboardEvent): void {
 
   // Alt 조합 단축키 처리
   if (e.altKey && this.dispatcher) {
+    // Alt+V → Chord 대기 (보기 메뉴 단축키, 한컴 Alt+V,T 계승)
+    if ((e.key === 'v' || e.key === 'V' || e.key === 'ㅍ') && !e.shiftKey && !e.ctrlKey) {
+      e.preventDefault();
+      this._pendingChordV = true;
+      return;
+    }
     const cmdId = matchShortcut(e, defaultShortcuts);
     if (cmdId) {
       e.preventDefault();

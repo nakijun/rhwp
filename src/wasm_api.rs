@@ -127,6 +127,12 @@ impl HwpDocument {
         self.invalidate_page_tree_cache();
     }
 
+    /// 투명선 표시 여부를 반환한다.
+    #[wasm_bindgen(js_name = getShowTransparentBorders)]
+    pub fn get_show_transparent_borders(&self) -> bool {
+        self.show_transparent_borders
+    }
+
     /// 투명선 표시 여부를 설정한다.
     #[wasm_bindgen(js_name = setShowTransparentBorders)]
     pub fn set_show_transparent_borders(&mut self, enabled: bool) {

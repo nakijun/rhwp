@@ -107,23 +107,21 @@ export const viewCommands: CommandDef[] = [
       },
     } satisfies CommandDef;
   })(),
-  (() => {
-    let showBorders = false;
-    return {
-      id: 'view:border-transparent',
-      label: '투명 선',
-      canExecute: (ctx) => ctx.hasDocument,
-      execute(services) {
-        showBorders = !showBorders;
-        services.wasm.setShowTransparentBorders(showBorders);
-        document.querySelectorAll('[data-cmd="view:border-transparent"]').forEach(el => {
-          el.classList.toggle('active', showBorders);
-        });
-        services.eventBus.emit('transparent-borders-changed', showBorders);
-        services.eventBus.emit('document-changed');
-      },
-    } satisfies CommandDef;
-  })(),
+  {
+    id: 'view:border-transparent',
+    label: '투명 선',
+    canExecute: (ctx) => ctx.hasDocument,
+    execute(services) {
+      // WASM 실제 상태를 읽어 토글 — 셀 진입 자동 ON 등으로 인한 초기값 불일치 방지
+      const next = !services.wasm.getShowTransparentBorders();
+      services.wasm.setShowTransparentBorders(next);
+      document.querySelectorAll('[data-cmd="view:border-transparent"]').forEach(el => {
+        el.classList.toggle('active', next);
+      });
+      services.eventBus.emit('transparent-borders-changed', next);
+      services.eventBus.emit('document-changed');
+    },
+  },
   (() => {
     let clipEnabled = true; // 기본: 잘림 적용 (편집용지 클립)
     return {
