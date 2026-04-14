@@ -4,8 +4,36 @@ on:
   push:
     branches: [main, devel]
     tags: ['v*']
+    paths-ignore:
+      - 'mydocs/**'
+      - 'docs/**'
+      - 'samples/**'
+      - 'assets/**'
+      - '*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
+      - '.github/CODE_OF_CONDUCT.md'
+      - '.github/SECURITY.md'
+      - '.github/pull_request_template.md'
+      - '.github/dependabot.yml'
+      - 'rhwp-logo.*'
   pull_request:
     branches: [main, devel]
+    paths-ignore:
+      - 'mydocs/**'
+      - 'docs/**'
+      - 'samples/**'
+      - 'assets/**'
+      - '*.md'
+      - 'LICENSE'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/FUNDING.yml'
+      - '.github/CODE_OF_CONDUCT.md'
+      - '.github/SECURITY.md'
+      - '.github/pull_request_template.md'
+      - '.github/dependabot.yml'
+      - 'rhwp-logo.*'
   workflow_dispatch:
 
 env:
