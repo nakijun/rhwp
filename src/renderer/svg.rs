@@ -302,6 +302,20 @@ impl SvgRenderer {
                 ));
                 self.output.push_str(&eq.svg_content);
                 self.output.push_str("</g>\n");
+                // 폰트 임베딩: 수식에서 사용된 글자 수집
+                if self.font_embed_mode != FontEmbedMode::None {
+                    let codepoints = self.font_codepoints
+                        .entry("Latin Modern Math".to_string())
+                        .or_default();
+                    // SVG <text> 요소 내부의 텍스트에서 문자 추출
+                    for segment in eq.svg_content.split("</text>") {
+                        if let Some(start) = segment.rfind('>') {
+                            for ch in segment[start + 1..].chars() {
+                                codepoints.insert(ch);
+                            }
+                        }
+                    }
+                }
             }
             RenderNodeType::FormObject(form) => {
                 self.render_form_object(form, &node.bbox);
@@ -2098,6 +2112,7 @@ fn known_font_filenames(font_name: &str) -> Vec<&'static str> {
         "HY그래픽" | "HYGraphic-Medium" => vec!["HYGPRM.TTF"],
         "HY견명조" | "HYMyeongJo-Extra" => vec!["HYMJRE.TTF"],
         "HY신명조" => vec!["HYSNMJ.TTF", "hamchob-r.ttf"],
+        "Latin Modern Math" => vec!["latinmodern-math.otf", "LatinModernMath-Regular.otf", "lmmath-regular.otf"],
         "맑은 고딕" | "Malgun Gothic" => vec!["malgun.ttf", "MalgunGothic.ttf"],
         "바탕" | "Batang" => vec!["batang.ttc", "BATANG.TTC", "hamchob-r.ttf"],
         "돋움" | "Dotum" => vec!["dotum.ttc", "DOTUM.TTC", "hamchod-r.ttf"],
