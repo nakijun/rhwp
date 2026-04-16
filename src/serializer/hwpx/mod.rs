@@ -145,11 +145,58 @@ mod tests {
         let mut sec0 = archive.by_name("Contents/section0.xml").expect("section0");
         let mut xml = String::new();
         std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
+        // Stage 2.3 (ref_mixed 기반): 혼합 콘텐츠 + tab 속성 포함
         assert!(
-            xml.contains("<hp:t>A<hp:tab/>B<hp:lineBreak/>C</hp:t>"),
-            "tab/linebreak not rendered inline: {}",
-            xml
+            xml.contains(r#"<hp:t>A<hp:tab width="4000" leader="0" type="1"/>B<hp:lineBreak/>C</hp:t>"#),
+            "mixed content not rendered: {}", xml
         );
+    }
+
+    #[test]
+    fn linesegs_emitted_per_linebreak() {
+        let mut doc = Document::default();
+        let mut section = crate::model::document::Section::default();
+        let mut para = crate::model::paragraph::Paragraph::default();
+        para.text = "A\nB\nC".to_string();
+        section.paragraphs.push(para);
+        doc.sections.push(section);
+
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip");
+        let mut sec0 = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
+
+        // 3줄(소프트) → lineseg 3개, textpos=0/2/4, vertpos=0/1600/3200
+        let count = xml.matches("<hp:lineseg ").count();
+        assert_eq!(count, 3, "expected 3 linesegs, got {}: {}", count, xml);
+        assert!(xml.contains(r#"textpos="0" vertpos="0""#));
+        assert!(xml.contains(r#"textpos="2" vertpos="1600""#));
+        assert!(xml.contains(r#"textpos="4" vertpos="3200""#));
+    }
+
+    #[test]
+    fn multi_paragraph_emits_multiple_hp_p() {
+        let mut doc = Document::default();
+        let mut section = crate::model::document::Section::default();
+        for t in ["첫째 줄", "둘째", "끝"] {
+            let mut p = crate::model::paragraph::Paragraph::default();
+            p.text = t.to_string();
+            section.paragraphs.push(p);
+        }
+        doc.sections.push(section);
+        let bytes = serialize_hwpx(&doc).expect("serialize");
+        let cursor = std::io::Cursor::new(&bytes);
+        let mut archive = zip::ZipArchive::new(cursor).expect("zip");
+        let mut sec0 = archive.by_name("Contents/section0.xml").expect("section0");
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut sec0, &mut xml).expect("read");
+        let p_count = xml.matches("<hp:p ").count();
+        assert_eq!(p_count, 3, "expected 3 <hp:p>, got {}", p_count);
+        assert!(xml.contains("<hp:t>첫째 줄</hp:t>"));
+        assert!(xml.contains("<hp:t>둘째</hp:t>"));
+        assert!(xml.contains("<hp:t>끝</hp:t>"));
     }
 
     #[test]

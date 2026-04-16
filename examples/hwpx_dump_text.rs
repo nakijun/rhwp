@@ -1,9 +1,4 @@
-//! Stage 2 검증용 — 텍스트(+탭/줄바꿈)를 담은 Document를 HWPX로 직렬화.
-//!
-//! 실행:
-//! ```
-//! cargo run --example hwpx_dump_text --release
-//! ```
+//! Stage 2 검증용 — 다양한 텍스트 시나리오 HWPX 산출.
 
 use std::fs;
 use std::path::Path;
@@ -13,27 +8,31 @@ use rhwp::model::paragraph::Paragraph;
 use rhwp::serializer::serialize_hwpx;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Stage 2.1 — 순수 텍스트
-    write_one(
-        "output/stage2_text.hwpx",
-        "안녕 Hello 123",
-    )?;
+    // Stage 2.1 — 단일 문단 순수 텍스트
+    write_paragraphs("output/stage2_text.hwpx", &["안녕 Hello 123"])?;
 
-    // Stage 2.2 — 탭/줄바꿈 포함
-    write_one(
-        "output/stage2_ctrl.hwpx",
-        "첫째\t탭 뒤\n둘째 줄\tTab\n셋째",
+    // Stage 2.3 — ref_mixed.hwpx 재현 (다문단 + 소프트 브레이크 + 탭)
+    write_paragraphs(
+        "output/stage2_mixed.hwpx",
+        &[
+            "첫째 줄",
+            "줄바꿈A\n줄바꿈B", // \n = 소프트 라인브레이크
+            "탭\t뒤",
+            "끝",
+        ],
     )?;
 
     Ok(())
 }
 
-fn write_one(path: &str, text: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn write_paragraphs(path: &str, texts: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
     let mut doc = Document::default();
     let mut section = Section::default();
-    let mut para = Paragraph::default();
-    para.text = text.to_string();
-    section.paragraphs.push(para);
+    for t in texts {
+        let mut para = Paragraph::default();
+        para.text = t.to_string();
+        section.paragraphs.push(para);
+    }
     doc.sections.push(section);
 
     let bytes = serialize_hwpx(&doc)?;
