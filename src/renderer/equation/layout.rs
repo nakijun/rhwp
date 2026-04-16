@@ -121,7 +121,7 @@ pub struct EqLayout {
 
 /// 비율 상수
 pub(crate) const SCRIPT_SCALE: f64 = 0.7;        // 첨자 크기 비율
-const FRAC_LINE_PAD: f64 = 0.15;      // 분수선 상하 여백 (font_size 비율)
+const FRAC_LINE_PAD: f64 = 0.2;       // 분수선 상하 여백 (font_size 비율)
 const FRAC_LINE_THICK: f64 = 0.04;    // 분수선 두께 (font_size 비율)
 const SQRT_PAD: f64 = 0.1;            // 제곱근 내부 상단 여백
 const PAREN_PAD: f64 = 0.08;          // 괄호 내부 좌우 여백
@@ -439,6 +439,11 @@ impl EqLayout {
     }
 
     fn layout_big_op(&self, symbol: &str, sub: &Option<Box<EqNode>>, sup: &Option<Box<EqNode>>, fs: f64) -> LayoutBox {
+        // 적분 기호: nolimits 스타일 (큰 기호 + 오른쪽 위/아래 첨자)
+        if is_integral_symbol(symbol) {
+            return self.layout_integral(symbol, sub, sup, fs);
+        }
+        // ∑, ∏ 등: limits 스타일 (위/아래 중앙)
         let op_fs = fs * BIG_OP_SCALE;
         let op_w = estimate_text_width(symbol, op_fs, false);
         let op_h = op_fs;
@@ -468,6 +473,54 @@ impl EqLayout {
 
         LayoutBox {
             x: 0.0, y: 0.0, width: max_w, height: total_h, baseline,
+            kind: LayoutKind::BigOp {
+                symbol: symbol.to_string(),
+                sub: sub_laid.map(Box::new),
+                sup: sup_laid.map(Box::new),
+            },
+        }
+    }
+
+    /// 적분 기호 레이아웃: 큰 기호 + 오른쪽 위/아래 첨자 (nolimits 스타일)
+    fn layout_integral(&self, symbol: &str, sub: &Option<Box<EqNode>>, sup: &Option<Box<EqNode>>, fs: f64) -> LayoutBox {
+        let op_fs = fs * BIG_OP_SCALE;
+        let op_w = estimate_text_width(symbol, op_fs, false);
+        let op_h = op_fs;
+
+        let sub_box = sub.as_ref().map(|s| self.layout_node(s, fs * SCRIPT_SCALE));
+        let sup_box = sup.as_ref().map(|s| self.layout_node(s, fs * SCRIPT_SCALE));
+
+        // 기호 기준선: 기호 높이의 60% (중앙보다 약간 위)
+        let op_baseline = op_h * 0.6;
+
+        // 위첨자: 기호 오른쪽 위
+        let sup_shift = op_h * 0.1; // 기호 상단에서 약간 아래
+        // 아래첨자: 기호 오른쪽 아래
+        let sub_shift = op_h * 0.55; // 기호 중앙 아래
+
+        let script_x = op_w; // 첨자는 기호 오른쪽에 배치
+
+        let mut total_w = op_w;
+        let mut total_h = op_h;
+
+        let sup_laid = sup_box.map(|mut b| {
+            b.x = script_x;
+            b.y = sup_shift;
+            total_w = total_w.max(script_x + b.width);
+            b
+        });
+
+        let sub_laid = sub_box.map(|mut b| {
+            b.x = script_x;
+            b.y = sub_shift;
+            total_w = total_w.max(script_x + b.width);
+            total_h = total_h.max(sub_shift + b.height);
+            b
+        });
+
+        LayoutBox {
+            x: 0.0, y: 0.0, width: total_w, height: total_h,
+            baseline: op_baseline,
             kind: LayoutKind::BigOp {
                 symbol: symbol.to_string(),
                 sub: sub_laid.map(Box::new),
@@ -790,6 +843,11 @@ impl EqLayout {
             kind: LayoutKind::Space(w),
         }
     }
+}
+
+/// 적분 기호 여부 판별
+fn is_integral_symbol(symbol: &str) -> bool {
+    matches!(symbol, "∫" | "∬" | "∭" | "∮" | "∯" | "∰")
 }
 
 /// 텍스트 폭 추정
