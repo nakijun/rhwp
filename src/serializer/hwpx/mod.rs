@@ -53,7 +53,7 @@ pub fn serialize_hwpx(doc: &Document) -> Result<Vec<u8>, SerializeError> {
         .map(|i| format!("Contents/section{}.xml", i))
         .collect();
     for (i, sec) in doc.sections.iter().enumerate() {
-        let xml = section::write_section(sec, doc, i)?;
+        let xml = section::write_section(sec, doc, i, &ctx)?;
         z.write_deflated(&section_hrefs[i], &xml)?;
     }
 
