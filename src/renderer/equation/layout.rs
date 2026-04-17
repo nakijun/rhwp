@@ -121,13 +121,17 @@ pub struct EqLayout {
 
 /// 비율 상수
 pub(crate) const SCRIPT_SCALE: f64 = 0.7;        // 첨자 크기 비율
-const FRAC_LINE_PAD: f64 = 0.15;      // 분수선 상하 여백 (font_size 비율)
+const FRAC_LINE_PAD: f64 = 0.2;       // 분수선 상하 여백 (font_size 비율)
 const FRAC_LINE_THICK: f64 = 0.04;    // 분수선 두께 (font_size 비율)
 const SQRT_PAD: f64 = 0.1;            // 제곱근 내부 상단 여백
 const PAREN_PAD: f64 = 0.08;          // 괄호 내부 좌우 여백
 pub(crate) const BIG_OP_SCALE: f64 = 1.5;        // 큰 연산자 크기 비율
 const MATRIX_COL_GAP: f64 = 0.8;      // 행렬 열 간격 (font_size 비율)
 const MATRIX_ROW_GAP: f64 = 0.3;      // 행렬 행 간격 (font_size 비율)
+/// 수식 축 높이 (TeX axis_height = 0.25em) — 분수선이 배치되는 기준 위치
+pub(crate) const AXIS_HEIGHT: f64 = 0.25;
+/// 텍스트 기본 baseline 비율 (상단에서 baseline까지)
+const TEXT_BASELINE: f64 = 0.8;
 
 impl EqLayout {
     pub fn new(font_size: f64) -> Self {
@@ -252,6 +256,16 @@ impl EqLayout {
     }
 
     fn layout_math_symbol(&self, text: &str, fs: f64) -> LayoutBox {
+        // 적분 기호: 큰 크기로 렌더링 (BIG_OP_SCALE 적용)
+        if is_integral_symbol(text) {
+            let op_fs = fs * BIG_OP_SCALE;
+            let w = estimate_text_width(text, op_fs, false);
+            return LayoutBox {
+                x: 0.0, y: 0.0, width: w, height: op_fs,
+                baseline: op_fs * 0.7, // 적분 기호 baseline: 기호 높이의 70%
+                kind: LayoutKind::MathSymbol(text.to_string()),
+            };
+        }
         let w = estimate_text_width(text, fs, false);
         LayoutBox {
             x: 0.0, y: 0.0, width: w, height: fs,
@@ -263,7 +277,7 @@ impl EqLayout {
     fn layout_function(&self, name: &str, fs: f64) -> LayoutBox {
         let w = estimate_text_width(name, fs, false);
         LayoutBox {
-            x: 0.0, y: 0.0, width: w + fs * 0.1, height: fs,
+            x: 0.0, y: 0.0, width: w + fs * 0.02, height: fs,
             baseline: fs * 0.8,
             kind: LayoutKind::Function(name.to_string()),
         }
@@ -275,14 +289,18 @@ impl EqLayout {
 
         let pad = fs * FRAC_LINE_PAD;
         let line_thick = fs * FRAC_LINE_THICK;
+        let axis = fs * AXIS_HEIGHT;
         let w = n.width.max(d.width) + pad * 2.0;
 
         let numer_h = n.height + pad;
         let denom_h = d.height + pad;
-        let total_h = numer_h + line_thick + denom_h;
 
-        // 분수선은 중앙에 배치, 기준선은 분수선 위치
-        let baseline = numer_h + line_thick / 2.0;
+        // TeX 방식: 분수선은 baseline에서 axis_height 위에 배치
+        // baseline(상단에서) = 분자높이 + 분수선두께/2 + axis_height
+        // 즉, 분수선 y = baseline - axis_height (상단 기준)
+        let frac_line_from_top = numer_h + line_thick / 2.0;
+        let baseline = frac_line_from_top + axis;
+        let total_h = numer_h + line_thick + denom_h;
 
         let mut n_box = n;
         n_box.x = (w - n_box.width) / 2.0;
@@ -390,9 +408,48 @@ impl EqLayout {
     }
 
     fn layout_subsup(&self, base: &EqNode, sub: &EqNode, sup: &EqNode, fs: f64) -> LayoutBox {
+        // 적분 기호: 상한은 기호 상단, 하한은 기호 하단에 맞춤
+        let is_integral = matches!(base, EqNode::MathSymbol(s) if is_integral_symbol(s));
+
         let b = self.layout_node(base, fs);
         let sb = self.layout_node(sub, fs * SCRIPT_SCALE);
         let sp = self.layout_node(sup, fs * SCRIPT_SCALE);
+
+        if is_integral {
+            // 적분 전용 배치: 상한은 기호 상단 오른쪽, 하한은 기호 하단 오른쪽
+            let sup_offset_y = fs * 0.13;  // 상한: 기호 상단에서 위로 ~2mm
+            let sub_offset_y = fs * 0.25;  // 하한: 기호 하단에서 위로 이동
+            let sub_offset_x = -(fs * 0.42); // 하한: 왼쪽으로 추가 1mm
+
+            let mut base_box = b;
+            let sup_y = 0.0; // 상단에 배치
+            let base_y = sp.height - sup_offset_y; // 상한 아래에 기호
+            base_box.x = 0.0;
+            base_box.y = base_y.max(0.0);
+
+            let mut sup_box = sp;
+            sup_box.x = base_box.width;
+            sup_box.y = sup_y;
+
+            let mut sub_box = sb;
+            sub_box.x = base_box.width + sub_offset_x;
+            sub_box.y = base_box.y + base_box.height - sub_offset_y;
+
+            let script_w = sup_box.width.max(sub_box.x + sub_box.width - base_box.width);
+            let total_w = base_box.width + script_w.max(0.0);
+            let total_h = (sub_box.y + sub_box.height).max(base_box.y + base_box.height);
+
+            return LayoutBox {
+                x: 0.0, y: 0.0, width: total_w,
+                height: total_h,
+                baseline: base_box.y + base_box.baseline,
+                kind: LayoutKind::SubSup {
+                    base: Box::new(base_box),
+                    sub: Box::new(sub_box),
+                    sup: Box::new(sup_box),
+                },
+            };
+        }
 
         let sup_shift = b.baseline - sp.height * 0.7;
         let sub_shift = b.baseline * 0.4;
@@ -431,6 +488,11 @@ impl EqLayout {
     }
 
     fn layout_big_op(&self, symbol: &str, sub: &Option<Box<EqNode>>, sup: &Option<Box<EqNode>>, fs: f64) -> LayoutBox {
+        // 적분 기호: nolimits 스타일 (큰 기호 + 오른쪽 위/아래 첨자)
+        if is_integral_symbol(symbol) {
+            return self.layout_integral(symbol, sub, sup, fs);
+        }
+        // ∑, ∏ 등: limits 스타일 (위/아래 중앙)
         let op_fs = fs * BIG_OP_SCALE;
         let op_w = estimate_text_width(symbol, op_fs, false);
         let op_h = op_fs;
@@ -460,6 +522,54 @@ impl EqLayout {
 
         LayoutBox {
             x: 0.0, y: 0.0, width: max_w, height: total_h, baseline,
+            kind: LayoutKind::BigOp {
+                symbol: symbol.to_string(),
+                sub: sub_laid.map(Box::new),
+                sup: sup_laid.map(Box::new),
+            },
+        }
+    }
+
+    /// 적분 기호 레이아웃: 큰 기호 + 오른쪽 위/아래 첨자 (nolimits 스타일)
+    fn layout_integral(&self, symbol: &str, sub: &Option<Box<EqNode>>, sup: &Option<Box<EqNode>>, fs: f64) -> LayoutBox {
+        let op_fs = fs * BIG_OP_SCALE;
+        let op_w = estimate_text_width(symbol, op_fs, false);
+        let op_h = op_fs;
+
+        let sub_box = sub.as_ref().map(|s| self.layout_node(s, fs * SCRIPT_SCALE));
+        let sup_box = sup.as_ref().map(|s| self.layout_node(s, fs * SCRIPT_SCALE));
+
+        // 기호 기준선: 기호 높이의 60% (중앙보다 약간 위)
+        let op_baseline = op_h * 0.6;
+
+        // 위첨자: 기호 오른쪽 위
+        let sup_shift = op_h * 0.1; // 기호 상단에서 약간 아래
+        // 아래첨자: 기호 오른쪽 아래
+        let sub_shift = op_h * 0.55; // 기호 중앙 아래
+
+        let script_x = op_w; // 첨자는 기호 오른쪽에 배치
+
+        let mut total_w = op_w;
+        let mut total_h = op_h;
+
+        let sup_laid = sup_box.map(|mut b| {
+            b.x = script_x;
+            b.y = sup_shift;
+            total_w = total_w.max(script_x + b.width);
+            b
+        });
+
+        let sub_laid = sub_box.map(|mut b| {
+            b.x = script_x;
+            b.y = sub_shift;
+            total_w = total_w.max(script_x + b.width);
+            total_h = total_h.max(sub_shift + b.height);
+            b
+        });
+
+        LayoutBox {
+            x: 0.0, y: 0.0, width: total_w, height: total_h,
+            baseline: op_baseline,
             kind: LayoutKind::BigOp {
                 symbol: symbol.to_string(),
                 sub: sub_laid.map(Box::new),
@@ -784,6 +894,11 @@ impl EqLayout {
     }
 }
 
+/// 적분 기호 여부 판별
+pub(crate) fn is_integral_symbol(symbol: &str) -> bool {
+    matches!(symbol, "∫" | "∬" | "∭" | "∮" | "∯" | "∰")
+}
+
 /// 텍스트 폭 추정
 fn estimate_text_width(text: &str, font_size: f64, italic: bool) -> f64 {
     let mut w = 0.0;
@@ -794,8 +909,7 @@ fn estimate_text_width(text: &str, font_size: f64, italic: bool) -> f64 {
             else if ch.is_ascii_digit() { 0.55 }
             else { 0.5 }
         } else {
-            // CJK / Unicode 수학 기호
-            1.0
+            estimate_unicode_char_width(ch)
         };
         w += font_size * ratio;
     }
@@ -803,6 +917,47 @@ fn estimate_text_width(text: &str, font_size: f64, italic: bool) -> f64 {
         w *= 1.05;
     }
     w
+}
+
+/// 비-ASCII 문자의 폭 비율 추정 (font_size 대비)
+fn estimate_unicode_char_width(ch: char) -> f64 {
+    match ch {
+        // 프라임/아포스트로피 — 매우 좁음
+        '′' | '″' | '‴' | '\'' | '`' => 0.3,
+        // 그리스 소문자 — 일반 라틴 소문자와 유사
+        'α'..='ω' | 'ϑ' | 'ϖ' => 0.55,
+        // 그리스 대문자 — 일반 라틴 대문자와 유사
+        'Α'..='Ω' | 'ϒ' => 0.65,
+        // 수학 연산자 — 중간 너비
+        '±' | '∓' | '×' | '÷' | '·' | '∘' | '†' | '‡' | '•' => 0.6,
+        // 관계 기호 — 등호 너비와 유사
+        '≠' | '≤' | '≥' | '≈' | '≡' | '≅' | '∼' | '≃' | '≍' | '≐' | '∝' | '≺' | '≻' => 0.7,
+        // 집합/논리 기호
+        '∈' | '∉' | '∋' | '⊂' | '⊃' | '⊆' | '⊇' | '∀' | '∃' | '¬' | '∧' | '∨' => 0.65,
+        '⊏' | '⊐' | '⊑' | '⊒' | '⊻' | '⊢' | '⊣' | '⊨' => 0.65,
+        // 큰 연산자 기호 (단독 텍스트로 사용될 때)
+        '∫' | '∬' | '∭' | '∮' | '∯' | '∰' => 0.5,
+        '∑' | '∏' | '∐' => 0.8,
+        '∪' | '∩' | '⊔' | '⊓' | '⊎' | '⋀' | '⋁' => 0.7,
+        '⊕' | '⊗' | '⊙' | '⊖' | '⊘' => 0.7,
+        // 화살표
+        '←' | '→' | '↑' | '↓' | '↔' | '↕' => 0.8,
+        '⇐' | '⇒' | '⇑' | '⇓' | '⇔' | '⇕' => 0.8,
+        '↖' | '↗' | '↙' | '↘' | '↦' | '↩' | '↪' => 0.8,
+        // 점 기호
+        '⋯' | '…' | '⋮' | '⋱' => 0.8,
+        // 기타 수학 기호 — 좁은 것
+        '∂' | '∅' | '∇' | '∞' | '∠' | '∡' | '∢' | '⊾' => 0.6,
+        '⊥' | '⊤' | '°' | '‰' | '‱' | '♯' => 0.5,
+        'ℵ' | 'ℏ' | 'ı' | 'ȷ' | 'ℓ' | '℘' | 'ℑ' | 'ℜ' | 'ℒ' | 'Å' | '℧' => 0.6,
+        '℃' | '℉' => 0.9,
+        '△' | '▽' | '○' | '◇' | '⋄' => 0.7,
+        // CJK — 전각
+        '\u{3000}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' |
+        '\u{AC00}'..='\u{D7AF}' => 1.0,
+        // 기타 비-ASCII — 중간 너비 기본값
+        _ => 0.6,
+    }
 }
 
 #[cfg(test)]

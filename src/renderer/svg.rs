@@ -296,10 +296,24 @@ impl SvgRenderer {
             }
             RenderNodeType::Equation(eq) => {
                 // 수식 SVG 조각을 bbox 위치에 배치
-                self.output.push_str(&format!(
-                    "<g transform=\"translate({},{})\">\n",
-                    node.bbox.x, node.bbox.y,
-                ));
+                // HWP 저장 영역(bbox)과 레이아웃 산출 크기(layout_box)가 다를 수 있으므로
+                // bbox 너비에 맞춰 스케일링
+                let scale_x = if eq.layout_box.width > 0.0 && node.bbox.width > 0.0 {
+                    node.bbox.width / eq.layout_box.width
+                } else {
+                    1.0
+                };
+                if (scale_x - 1.0).abs() > 0.01 {
+                    self.output.push_str(&format!(
+                        "<g transform=\"translate({},{}) scale({:.4},1)\">\n",
+                        node.bbox.x, node.bbox.y, scale_x,
+                    ));
+                } else {
+                    self.output.push_str(&format!(
+                        "<g transform=\"translate({},{})\">\n",
+                        node.bbox.x, node.bbox.y,
+                    ));
+                }
                 self.output.push_str(&eq.svg_content);
                 self.output.push_str("</g>\n");
                 // 폰트 임베딩: 수식에서 사용된 글자 수집

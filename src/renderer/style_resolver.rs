@@ -615,7 +615,7 @@ fn resolve_single_para_style(ps: &ParaShape, tab_defs: &[TabDef], dpi: f64) -> R
     let tab_def = tab_defs.get(ps.tab_def_id as usize);
     let tab_stops: Vec<TabStop> = tab_def
         .map(|td| td.tabs.iter().map(|t| TabStop {
-            position: hwpunit_to_px(t.position as i32, dpi) / 2.0,
+            position: hwpunit_to_px(t.position as i32, dpi) / 2.0, // HWP 탭 position은 실제 좌표의 2배로 저장됨 (한컴 격자 비교로 확인)
             tab_type: t.tab_type,
             fill_type: t.fill_type,
         }).collect())

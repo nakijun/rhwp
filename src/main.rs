@@ -1425,8 +1425,9 @@ fn dump_controls(args: &[String]) {
                         println!("{}글자겹침: {:?}", prefix, co.chars);
                     }
                     Control::Equation(eq) => {
-                        println!("{}수식: script=\"{}\" font_size={} font=\"{}\"",
-                            prefix, eq.script, eq.font_size, eq.font_name);
+                        println!("{}수식: script=\"{}\" font_size={} font=\"{}\" size={}x{} tac={}",
+                            prefix, eq.script, eq.font_size, eq.font_name,
+                            eq.common.width, eq.common.height, eq.common.treat_as_char);
                     }
                     Control::Form(f) => {
                         println!("{}양식개체: {:?} name=\"{}\" caption=\"{}\" {}x{}",

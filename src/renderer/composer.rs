@@ -128,6 +128,7 @@ pub fn compose_paragraph(para: &Paragraph) -> ComposedParagraph {
                     Some((pos, s.common().width as i32, i))
                 }
                 Control::Equation(eq) => {
+                    // HWP 저장값을 사용 — 한컴 편집기가 실제 폰트로 계산한 정확한 너비
                     Some((pos, eq.common.width as i32, i))
                 }
                 Control::Form(f) => {
