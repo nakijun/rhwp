@@ -451,6 +451,18 @@ impl DocumentCore {
             .map_err(|e| HwpError::RenderError(e.to_string()))
     }
 
+    /// HWPX 출처 IR 을 HWP 호환 형태로 변환 후 HWP 5.0 CFB 바이너리로 직렬화한다 (#178).
+    ///
+    /// HWP 출처는 어댑터가 no-op 이므로 `export_hwp_native` 와 동일 결과.
+    /// 사용자 시나리오: HWPX 로 연 문서를 편집 후 HWP 로 저장하는 모든 경로의 단일 진입점.
+    ///
+    /// 어댑터 호출은 IR 자체를 변경하므로 `&mut self` 를 요구한다.
+    pub fn export_hwp_with_adapter(&mut self) -> Result<Vec<u8>, HwpError> {
+        use crate::document_core::converters::hwpx_to_hwp::convert_if_hwpx_source;
+        let _report = convert_if_hwpx_source(&mut self.document, self.source_format);
+        self.export_hwp_native()
+    }
+
     /// Document IR을 HWPX(ZIP+XML)로 직렬화 (네이티브 에러 타입)
     pub fn export_hwpx_native(&self) -> Result<Vec<u8>, HwpError> {
         crate::serializer::serialize_hwpx(&self.document)

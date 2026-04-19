@@ -2782,9 +2782,12 @@ impl HwpDocument {
     /// 문서를 HWP 바이너리로 내보낸다.
     ///
     /// Document IR을 HWP 5.0 CFB 바이너리로 직렬화하여 반환한다.
+    /// HWPX 출처 문서는 `export_hwp_with_adapter` 를 통해 HWPX→HWP IR 매핑 어댑터를
+    /// 자동 적용하여 한컴 호환성과 자기 재로드 페이지 보존을 보장한다 (#178).
+    /// HWP 출처는 어댑터가 no-op 이므로 기존 동작과 동일.
     #[wasm_bindgen(js_name = exportHwp)]
-    pub fn export_hwp(&self) -> Result<Vec<u8>, JsValue> {
-        self.export_hwp_native().map_err(|e| e.into())
+    pub fn export_hwp(&mut self) -> Result<Vec<u8>, JsValue> {
+        self.export_hwp_with_adapter().map_err(|e| e.into())
     }
 
     /// Document IR을 HWPX(ZIP+XML)로 직렬화하여 반환한다.

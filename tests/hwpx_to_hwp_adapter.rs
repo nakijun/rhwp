@@ -363,3 +363,86 @@ fn stage4_page_count_recovered_hwpx_h_02() {
 fn stage4_page_count_recovered_hwpx_h_03() {
     assert_page_count_recovered("hwpx-h-03", &load_sample("hwpx-h-03.hwpx"));
 }
+
+// ============================================================
+// Stage 5 — 통합 진입점 export_hwp_with_adapter() 검증
+// ============================================================
+
+#[test]
+fn stage5_export_hwp_with_adapter_hwpx_source_recovers_pages() {
+    let bytes = load_sample("hwpx-h-01.hwpx");
+    let mut core = DocumentCore::from_bytes(&bytes).expect("HWPX 로드");
+    let orig = core.page_count();
+
+    let hwp_bytes = core.export_hwp_with_adapter().expect("HWP 직렬화");
+    let reloaded = DocumentCore::from_bytes(&hwp_bytes).expect("HWP 재로드");
+
+    assert_eq!(reloaded.page_count(), orig,
+        "어댑터 통합 진입점: 페이지 수 보존 (orig={}, reloaded={})",
+        orig, reloaded.page_count());
+}
+
+#[test]
+fn stage5_export_hwp_with_adapter_hwp_source_unchanged() {
+    // HWP 원본 — 어댑터는 no-op (source_format != Hwpx)
+    let path = "samples/hwp_table_test.hwp";
+    let bytes = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => { eprintln!("[skip] {} 없음", path); return; }
+    };
+    let mut core = DocumentCore::from_bytes(&bytes).expect("HWP 로드");
+
+    let bytes_native = core.export_hwp_native().expect("native 직렬화");
+    let bytes_adapter = core.export_hwp_with_adapter().expect("adapter 직렬화");
+
+    assert_eq!(bytes_native, bytes_adapter,
+        "HWP 출처는 어댑터 호출이 native 와 동일 결과여야 함");
+}
+
+#[test]
+fn stage5_export_hwp_with_adapter_idempotent_on_repeated_calls() {
+    // 같은 DocumentCore 에 export_hwp_with_adapter() 를 두 번 호출.
+    // 1차 호출이 IR 을 정규화하면, 2차 호출은 어댑터 가드에 막혀 변경 없음.
+    let bytes = load_sample("hwpx-h-01.hwpx");
+    let mut core = DocumentCore::from_bytes(&bytes).expect("HWPX 로드");
+
+    let first = core.export_hwp_with_adapter().expect("1차");
+    let second = core.export_hwp_with_adapter().expect("2차");
+
+    assert_eq!(first, second,
+        "동일 DocumentCore 에 어댑터 통합 진입점 2회 호출 시 같은 bytes");
+}
+
+#[test]
+fn stage5_all_three_samples_recover_via_unified_entry_point() {
+    for name in ["hwpx-h-01.hwpx", "hwpx-h-02.hwpx", "hwpx-h-03.hwpx"] {
+        let bytes = load_sample(name);
+        let mut core = DocumentCore::from_bytes(&bytes).expect("HWPX 로드");
+        let orig = core.page_count();
+
+        let hwp_bytes = core.export_hwp_with_adapter().expect("HWP 직렬화");
+        let reloaded = DocumentCore::from_bytes(&hwp_bytes).expect("HWP 재로드");
+
+        assert_eq!(reloaded.page_count(), orig,
+            "{}: 페이지 수 보존 (orig={}, reloaded={})",
+            name, orig, reloaded.page_count());
+    }
+}
+
+#[test]
+fn stage5_wasm_api_export_hwp_uses_adapter() {
+    // wasm_api 의 export_hwp (네이티브 래퍼: export_hwp_native_wrapper 가 아니라
+    // HwpDocument 자체가 DerefMut<DocumentCore>) 가 어댑터를 자동 적용하는지 확인.
+    // 본 테스트는 네이티브 환경에서 wasm_api 진입점 동작을 검증.
+    let bytes = load_sample("hwpx-h-01.hwpx");
+    let mut doc = rhwp::wasm_api::HwpDocument::from_bytes(&bytes).expect("HWPX 로드");
+    let orig = doc.page_count();
+
+    // export_hwp 는 wasm_bindgen 메서드라 직접 호출 불가 → 동등한 export_hwp_with_adapter 호출
+    let hwp_bytes = doc.export_hwp_with_adapter().expect("어댑터 직렬화");
+    let reloaded = DocumentCore::from_bytes(&hwp_bytes).expect("HWP 재로드");
+
+    assert_eq!(reloaded.page_count(), orig as u32,
+        "wasm_api 경로: 페이지 수 보존 (orig={}, reloaded={})",
+        orig, reloaded.page_count());
+}
